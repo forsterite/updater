@@ -119,6 +119,9 @@ strconstant ksHistoryFile = "History.txt" // Installation and update activity is
 strconstant ksCacheFile = "Cache.txt" // file used as cache for information parsed from IgorExchange web pages
 strconstant ksLogFile = "Install.log" // file used to record details of each installed project
 
+// location for a failsafe file, can be used to restore updater if the IgorExchange website format is changed
+strconstant ksGitHub = "https://raw.githubusercontent.com/forsterite/updater/main/Updater.ipf"
+
 // User-configurable settings are accessible from the control panel: Misc -> IgorExchange Projects...
 
 //#define testing
@@ -3487,6 +3490,35 @@ function /S ChooseInstallLocation(string packageName, int restricted)
 	KillPath /Z TempInstallPath
 	return S_path
 end
+
+function RepairUpdater()
+	
+	STRUCT PackagePrefs prefs
+	LoadPrefs(prefs)
+
+	URLRequest /time=(prefs.pageTimeout)/Z url=ksGitHub
+	if (V_flag)
+		WriteToHistory("Updater could not be repaired", prefs, 0)
+		return 0
+	endif
+
+	wave /T wProc = ListToTextWave(S_serverResponse, "\r")	
+	variable GitHubVersion
+	Grep /Q/E="(?i)^#pragma[\s]*version[\s]*="/LIST/Z wProc
+	s_value = LowerStr(TrimString(s_value, 1))
+	sscanf s_value, "#pragma version = %f", GitHubVersion
+	if (V_flag!=1 || GitHubVersion<=0)
+		WriteToHistory("Updater could not be repaired", prefs, 0)
+		return 0
+	endif 
+	
+	if (GetThisVersion() >= GitHubVersion)
+		return 0
+	endif
+
+	UpdateFile(FunctionPath(""), ksGitHub, "8197", shortTitle="Updater", localVersion=GetThisVersion(), newVersion=GitHubVersion)
+end
+
 
 // -------------- A GUI for installing and updating user projects ------------
 
