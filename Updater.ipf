@@ -2,7 +2,7 @@
 #pragma rtGlobals=3
 #pragma IgorVersion=8
 #pragma IndependentModule=Updater
-#pragma version=4.45
+#pragma version=4.46
 #include <Resize Controls>
 
 // Updater headers
@@ -612,12 +612,14 @@ function MakePrefsPanel()
 			frequencyPopMode = 5 // never
 	endswitch
 	
-	NewPanel /K=1/N=UpdaterPrefsPanel/W=(WL,WT,WL+215,WT+345) as "Settings [" + num2str(GetThisVersion()) + "]"
+	NewPanel /K=1/N=UpdaterPrefsPanel/W=(WL,WT,WL+215,WT+375) as "Settings [" + num2str(GetThisVersion()) + "]"
 	ModifyPanel /W=UpdaterPrefsPanel, fixedSize=1, noEdit=1
 	
 	variable left = 15
 	variable top = 10
-	
+	Button btnRepair,win=UpdaterPrefsPanel,pos={left,top},title="Repair Updater...",size={125,22},Proc=updater#PrefsButtonProc
+	Button btnRepair,win=UpdaterPrefsPanel,help={"Repair uploader by downloading a fresh copy"}
+	top += 30
 	Button btnClearCache,win=UpdaterPrefsPanel,pos={left,top},title="Clear Cache",size={85,22},Proc=updater#PrefsButtonProc
 	Button btnClearCache,win=UpdaterPrefsPanel,help={"Clear downloaded project release info from cache"}
 	Button btnHistory,win=UpdaterPrefsPanel,pos={110,top},title="Show History",size={90,22},Proc=updater#PrefsButtonProc
@@ -684,6 +686,13 @@ function PrefsButtonProc(STRUCT WMButtonAction &s)
 	if (s.eventCode != 2)
 		return 0
 	endif
+	
+	if (cmpstr(s.ctrlName, "BtnRepair") == 0)	
+		KillWindow /Z $s.win
+		RepairUpdater()
+		return 0
+	endif
+	
 	if (cmpstr(s.ctrlName, "BtnClearCache") == 0)
 		return CacheClearAll()
 	endif
@@ -3491,6 +3500,8 @@ function /S ChooseInstallLocation(string packageName, int restricted)
 	return S_path
 end
 
+// this is an emergency repair function.
+// uses a fixed url to grab a recent working version.
 function RepairUpdater()
 	
 	STRUCT PackagePrefs prefs
@@ -3513,6 +3524,7 @@ function RepairUpdater()
 	endif 
 	
 	if (GetThisVersion() >= GitHubVersion)
+		WriteToHistory("Repair attempted: no new version found", prefs, 0)
 		return 0
 	endif
 
@@ -4146,10 +4158,9 @@ function ReloadUpdatesList(int forced, int gui)
 	return 1
 end
 
-
 // returns string list, no shortTitle available from project page
 // projectID;ReleaseCacheDate;name;remote;system;releaseDate;releaseURL;releaseIgorVersion;releaseInfo
-// used in premptive task
+// Used in premptive task
 threadsafe function /S DownloadStringlistFromProjectPage(string projectID, variable timeout)
 	string url = ""
 	sprintf url, "https://www.wavemetrics.com/node/%s", projectID
@@ -4161,7 +4172,6 @@ threadsafe function /S DownloadStringlistFromProjectPage(string projectID, varia
 	
 	return ParseProjectPageAsList(projectID, S_serverResponse)
 end
-
 
 // returns keylist of release info from project web page
 // no shortTitle key, name key contains full title
