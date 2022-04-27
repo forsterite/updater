@@ -3502,7 +3502,7 @@ function RepairUpdater()
 		return 0
 	endif
 
-	wave /T wProc = ListToTextWave(S_serverResponse, "\r")	
+	wave /T wProc = ListToTextWave(S_serverResponse, "\n")	
 	variable GitHubVersion
 	Grep /Q/E="(?i)^#pragma[\s]*version[\s]*="/LIST/Z wProc
 	s_value = LowerStr(TrimString(s_value, 1))
