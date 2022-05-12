@@ -2,7 +2,7 @@
 #pragma rtGlobals=3
 #pragma IgorVersion=8
 #pragma IndependentModule=Updater
-#pragma version=4.46
+#pragma version=4.48
 #include <Resize Controls>
 
 // Updater headers
@@ -68,7 +68,17 @@ static strconstant ksShortTitle="Updater" // the project short title on IgorExch
 // Design your project so that files do not have to be moved into other
 // locations after installation. You can provide an itx script as part of
 // your package if you need Igor to create shortcuts for XOPs, help
-// files, etc.
+// files, etc. Please include one of the following lines (starting with 
+// X) in your itx file to identify it as a script to be run after
+// installation:
+
+// X // Updater Script
+// X // Updater Script for Macintosh
+// X // Updater Script for Windows
+
+// note that if you use a script to create aliases and the user 
+// subsequently uninstalls the project, the aliases will not be cleaned 
+// up and an error will likely occur.
 
 // If you change the structure of your zip archive between releases,
 // Updater may refuse to install the new version as an update. The user
@@ -102,12 +112,12 @@ static strconstant ksShortTitle="Updater" // the project short title on IgorExch
 
 // Required igor version is not accessible for recent project releases.
 // In older releases this information was encoded in the version string,
-// but that's not currently enforced. Since Updater requires Igor Pro 8+,
-// this should not cause any problems.
+// but that's not currently enforced. Updater requires Igor Pro 8+, so 
+// projects requiring Igor 9+ may become problematic in the future.
 
 // feedback? ideas? send me a note: https: www.wavemetrics.com/user/tony
 
-constant kNumProjects = 240 // provides a rough idea of the minimum number of user-contributed projects that can be found at wavemetrics.com
+constant kNumProjects = 250 // provides a rough idea of the minimum number of user-contributed projects that can be found at wavemetrics.com
 constant kRemoveSuffix = 1 // if a single file is downloaded that has a name that looks like it has
  								// a suffix added to make the file unique, remove that suffix.
 strconstant ksIgnoreFilesList = ".DS_Store;Install Updater.itx;" // list of files that shouldn't be copied, wildcards okay
@@ -134,7 +144,8 @@ menu "Misc"
 end
 
 
-// --------- Hook and related functions for initiating periodic checks ------------------
+// ------------------------------------------------------------------
+// ***  Hook and related functions for initiating periodic checks ***
 
 // strangely, in an indepependent module this must be static
 static function IgorStartOrNewHook(string igorApplicationNameStr)
@@ -286,6 +297,13 @@ threadsafe function PreemptiveDownloader()
 	// reload the projects list
 	wave /T w_AllProjectsDL = DownloadProjectsList(timeout)
 	Duplicate w_AllProjectsDL :w_AllProjectsDL
+	
+	variable /G :GitVer /N=GitVer
+	GitVer = GetGitHubVersion(timeout)
+//	if (numpnts(w_InstalledProjectsDL)==0 && numpnts(w_AllProjectsDL)==0)
+//		NVAR git = :GitVer
+//		git = GetGitHubVersion(timeout)
+//	endif
 
 	// ThreadGroupPutDF requires that no waves in the data folder be referenced
 	WAVEClear w_InstalledProjectsDL, w_InstalledProjectIDs, w_AllProjectsDL, w_InstalledVersions
@@ -498,6 +516,14 @@ function BackgroundCheck(STRUCT WMBackgroundStruct &s)
 		endif
 	endif
 	
+	NVAR /SDFR=dfr GitVer = GitVer
+	if (GitVer && GitVer>GetThisVersion())
+		DoAlert 1, "It looks like Updater may need to be repaired\r\rDo you want to replace with version " + num2str(GitVer) + "?"
+		if (v_flag == 1) // yes
+			RepairUpdater()
+		endif
+	endif
+	
 	LoadPrefs(prefs)
 	prefs.lastCheck = datetime
 	SavePackagePreferences ksPackageName, ksPrefsFileName, 0, prefs
@@ -509,7 +535,8 @@ function BackgroundCheck(STRUCT WMBackgroundStruct &s)
 	return 1 // bg task doesn't repeat
 end
 
-// ------------------------ package preferences ----------------------
+// --------------------------------------------------------------
+// *** package preferences ***
 
 // define some constants for saving preferences for this package
 strconstant ksPackageName = Updater
@@ -1095,7 +1122,7 @@ function /S UpdateZip(filePath, url, projectID, [shortTitle, localVersion, newVe
 	KillPath /Z unzipPath
 		
 	// ignore pesky __MACOSX folder, and other folders listed in ignoreFoldersList
-	folderList = RemoveFromListWC(folderList, ksIgnoreFoldersList)
+	folderList = RemoveFromListWC(folderList, ksIgnoreFoldersList)	
 	fileList = RemoveFromListWC(fileList, ksIgnoreFilesList)
 	
 	// check number of files and folders at root of inflated archive
@@ -1135,13 +1162,13 @@ function /S UpdateZip(filePath, url, projectID, [shortTitle, localVersion, newVe
 	endif
 
 	// test to find out which files will be overwritten
-	fileList = MergeFolder(unzipPathStr, installPathStr, test=1)
+	fileList = MergeFolder(unzipPathStr, installPathStr, test=1, ignore=ksIgnoreFilesList)
 	numFiles = ItemsInList(fileList)	
 	oldFiles = LogGetFileList(projectID) // file list from log (if log exists)
 	staleFiles = RemoveFromList(fileList, oldFiles, ";", 0) // files to be removed	
 	oldFiles = fileList // files to be overwritten
 	if (strlen(staleFiles))
-		oldFiles = AddListItem(staleFiles,oldFiles)
+		oldFiles = AddListItem(staleFiles, oldFiles)
 	endif
 	variable numOldFiles = ItemsInList(oldFiles)
 	
@@ -1180,7 +1207,7 @@ function /S UpdateZip(filePath, url, projectID, [shortTitle, localVersion, newVe
 	endif
 		
 	// move files into user procedures folder
-	fileList = MergeFolder(unzipPathStr, installPathStr, backupPathStr=backupPathStr, killSourceFolder=0)
+	fileList = MergeFolder(unzipPathStr, installPathStr, backupPathStr=backupPathStr, killSourceFolder=0, ignore=ksIgnoreFilesList)
 
 	for (i=0;i<ItemsInList(fileList);i+=1)
 		fileName = StringFromList(i, fileList) // this is full path to file
@@ -1324,6 +1351,9 @@ end
 threadsafe function GetProcVersion(string filePath)
 	variable procVersion
 	Grep /Q/E="(?i)^#pragma[\s]*version[\s]*=" /LIST/Z filePath
+	if (v_flag != 0)
+		return 0
+	endif
 	s_value = LowerStr(TrimString(s_value, 1))
 	sscanf s_value, "#pragma version = %f", procVersion
 	if (V_flag!=1 || procVersion<=0)
@@ -1333,7 +1363,8 @@ threadsafe function GetProcVersion(string filePath)
 end
 
 function GetThisVersion()
-	wave /T ProcText = ListToTextWave(ProcedureText("", 0, "Updater.ipf [updater]"), "\r")
+	string str = ReplaceString("\n", ProcedureText("", 0, "Updater.ipf [updater]"), "\r")
+	wave /T ProcText = ListToTextWave(str, "\r")
 	variable version = 0
 	Grep /Q/E="(?i)^#pragma[\s]*version[\s]*=" /LIST/Z ProcText
 	s_value = LowerStr(TrimString(s_value, 1))
@@ -1358,6 +1389,9 @@ function /S GetPragmaString(string strPragma, string filePath)
 	endif
 	string s_exp="(?i)^#pragma[\s]*"+strPragma+"[\s]*="
 	Grep /Q/E=s_exp/LIST/Z filePath
+	if (v_flag != 0)
+		return ""
+	endif
 	string str = RemoveEnding(s_value, ";")
 	variable vpos = strsearch(str, "=", 0)
 	if (vpos == -1)
@@ -1377,6 +1411,9 @@ function GetPragmaVariable(string strPragma, string filePath)
 	endif
 	string s_exp = "(?i)^#pragma[\s]*" + strPragma + "[\s]*="
 	Grep /Q/E=s_exp/LIST/Z filePath
+	if (v_flag != 0)
+		return NaN
+	endif
 	variable result
 	sscanf s_value, "#pragma " + strpragma + " = %g", result
 	return v_flag ? result : NaN
@@ -1391,9 +1428,14 @@ function /S GetShortTitle(string filePath)
 	endif
 	if (strlen(shortTitle) == 0)
 		Grep /Q/E="(?i)#pragma[\s]*moduleName[\s]*=" /LIST/Z filePath
+	
+		if (v_flag != 0)
+			return ""
+		endif
+		
 		if (strlen(s_value) == 0)
 			Grep /Q/E="(?i)#pragma[\s]*IndependentModule[\s]*=" /LIST/Z filePath
-			if (strlen(s_value) == 0)
+			if (v_flag != 0 || strlen(s_value) == 0)
 				return ""
 			endif
 		endif
@@ -1431,6 +1473,9 @@ function GetUpdaterConstantFromFile(string strName, string filePath)
 	string s_exp = "", s_out = ""
 	sprintf s_exp, "(?i)^[\s]*static[\s]*constant[\s]*%s[\s]*=", strName
 	Grep /Q/E=s_exp/LIST/Z filePath
+	if (v_flag != 0)
+		return NaN
+	endif
 	variable start, stop
 	start = strsearch(s_value, "=", 0)
 	if (start<0)
@@ -1982,14 +2027,18 @@ end
 // Files in destination folder are overwritten by files from source
 // Setting test=1 doesn't move anything but generates a list of files
 // that would be overwritten
-function /S MergeFolder(source, destination, [killSourceFolder, backupPathStr, test])
+// ignore is a string list of names of files that should not be moved.
+// includes a check for install scripts
+function /S MergeFolder(source, destination, [killSourceFolder, backupPathStr, test, ignore])
 	string source, destination
 	variable killSourceFolder, test
 	string backupPathStr // must be no more than one sublevel below an existing folder
+	string ignore // list of filenames that won't be moved
 	
 	killSourceFolder = ParamIsDefault(killSourceFolder) ? 1 : killSourceFolder
 	test = ParamIsDefault(test) ? 0 : test
-	backupPathStr = selectstring(ParamIsDefault(backupPathStr), backupPathStr, "")
+	backupPathStr = SelectString(ParamIsDefault(backupPathStr), backupPathStr, "")
+	ignore = SelectString(ParamIsDefault(ignore), ignore, "")
 	variable backup = (strlen(backupPathStr)>0)
 	
 	// clean up paths
@@ -2009,7 +2058,7 @@ function /S MergeFolder(source, destination, [killSourceFolder, backupPathStr, t
 	
 	variable folderIndex, fileIndex, subfolderIndex, folderCount = 1, sublevels = 0
 	string folderList, fileList, fileName
-	string movedfileList = "", destFolderStr = "", subPathStr = ""
+	string movedFileList = "", destFolderStr = "", subPathStr = ""
 	
 	Make /free/T/N=0 w_folders, w_subfolders
 	w_folders = {source}
@@ -2032,14 +2081,20 @@ function /S MergeFolder(source, destination, [killSourceFolder, backupPathStr, t
 			NewPath /O/Q/Z tempPathIXI, w_folders[folderIndex]
 			fileList = IndexedFile(tempPathIXI, -1, "????")
 			// remove files from list if they match an entry in ignorefileList
-			fileList = RemoveFromListWC(fileList, ksIgnoreFilesList)
+			fileList = RemoveFromListWC(fileList, ignore)
 			// move files
 			for (fileindex=0;fileIndex<ItemsInList(fileList);fileIndex+=1)
 				fileName = StringFromList(fileindex, fileList)
+				
+				// check for install scripts
+				if (CheckScript(w_folders[folderIndex] + fileName) == 1)
+					continue
+				endif
+				
 				if (test)
 					GetFileFolderInfo /Q/Z destFolderStr + fileName
 					if (v_flag==0 && v_isFile) // file is to be overwritten
-						movedfileList = AddListItem(destFolderStr + fileName, movedfileList)
+						movedFileList = AddListItem(destFolderStr + fileName, movedfileList)
 					endif
 				else
 					if (backup) // back up any files that are to be overwritten
@@ -2050,7 +2105,7 @@ function /S MergeFolder(source, destination, [killSourceFolder, backupPathStr, t
 						endif
 					endif
 					MoveFile /Z/O w_folders[folderIndex] + fileName as destFolderStr + fileName
-					movedfileList = AddListItem(destFolderStr + fileName, movedfileList)
+					movedFileList = AddListItem(destFolderStr + fileName, movedfileList)
 				endif
 			endfor
 			
@@ -2082,7 +2137,7 @@ function /S MergeFolder(source, destination, [killSourceFolder, backupPathStr, t
 		DeleteFolder /Z RemoveEnding(source, ":")
 	endif
 	
-	return SortList(movedfileList)
+	return SortList(movedFileList)
 end
 
 // ------------------------- Project Installer ---------------------
@@ -2304,8 +2359,8 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 	sprintf cmd, "Saved temporary file %s\r", fileName
 	WriteToHistory(cmd, prefs, 0)
 	
-	fileExtension = ParseFilePath(4, fileName,":", 0, 0)
-	isZip = stringmatch(ParseFilePath(4, fileName,":", 0, 0), "zip")
+	fileExtension = ParseFilePath(4, fileName, ":", 0, 0)
+	isZip = stringmatch(fileExtension, "zip")
 	
 	if (isZip)
 		//string archivePathStr = fileName // path to zip file
@@ -2354,7 +2409,8 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 	// move files/folders to destination
 	if (isZip)
 		// test to find out which files will overwritten
-		fileList = MergeFolder(unzipPathStr, packagePathStr, test=1)
+		fileList = MergeFolder(unzipPathStr, packagePathStr, test=1, ignore=ksIgnoreFilesList)
+		
 		if (ItemsInList(fileList))
 			cmd = GenerateOverwriteAlertString(filelist, rootPath=packagePathStr)
 			DoAlert 1, cmd
@@ -2376,7 +2432,7 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 		endif
 			
 		// move files into user procedures folder
-		fileList = MergeFolder(unzipPathStr, packagePathStr, backupPathStr=backupPathStr, killSourceFolder=0)
+		fileList = MergeFolder(unzipPathStr, packagePathStr, backupPathStr=backupPathStr, killSourceFolder=0, ignore=ksIgnoreFilesList)
 		int numFiles = ItemsInList(fileList)
 		for (i=0;i<numFiles;i+=1)
 			fileName = StringFromList(i, fileList) // this is full path to file
@@ -2471,13 +2527,15 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 //			endif
 //		endif
 //	endif
+
+// solution is for developer to supply an itx script to create an alias for the correct xop.
+// see the tp of this file for more info about itx scripts.
 	
 	
 	// perhaps this stuff should be done before attempting to run script etc?
 	// moved the next two lines from end of this function
 	LogUpdateProject(projectID, shortTitle, packagePathStr, num2str(releaseVersion), fileList)	
-	InstallerCleanup(downloadPathStr)
-	
+	InstallerCleanup(downloadPathStr)	
 			
 	// Look for and run itx-format installation script. Script will run
 	// from within the package folder saved in location of user's
@@ -2489,21 +2547,49 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 	// first grep all itx for X // updater script
 	// then for X // updater script OS
 	
-	string pathToScriptStr = ListMatch(fileList, "*:updaterscript.itx")
-	if (strlen(pathToScriptStr) == 0)
-		pathToScriptStr = ListMatch(fileList, "*:updaterscript" + system + ".itx")
-	endif
+	// fileList is list of full file paths
 	
-	// for backward compatibility. (install was a poor choice of fileName!)
-	if (strlen(pathToScriptStr) == 0)
-		pathToScriptStr = ListMatch(fileList, "*:install.itx")
-		if (strlen(pathToScriptStr) == 0)
-			pathToScriptStr = ListMatch(fileList, "*:install" + system + ".itx")
+	string pathToScriptStr = ""
+	string listOfITX = ListMatch(fileList, "*.itx")
+	string ithITX = ""
+	int numITX = ItemsInList(listOfITX)
+	for (i=0;i<numITX;i++)
+		ithITX = StringFromList(i, listOfITX)
+		Grep /Z/Q/E="(?i)^X[\s]*//[\s]*Updater Script[\s]*$" ithITX
+		if (V_value)
+			pathToScriptStr = ithITX
+			break
 		endif
-	endif
+		Grep /Z/Q/E="(?i)^X[\s]*//[\s]*Updater Script[\s]*(for[\s]*)?" + system + "[\s]*$" ithITX
+		if (V_value)
+			pathToScriptStr = ithITX
+			break
+		endif
+		
+		// fix for one project
+		Grep /Z/Q/E="(?i)^X // install script for LaTeX Pictures" ithITX
+		if (V_value)
+			pathToScriptStr = ithITX
+			break
+		endif
+			
+	endfor
+	
+//	pathToScriptStr = ListMatch(fileList, "*:updaterscript.itx")
+//	if (strlen(pathToScriptStr) == 0)
+//		pathToScriptStr = ListMatch(fileList, "*:updaterscript" + system + ".itx")
+//	endif
+//	
+//	// for backward compatibility. (install was a poor choice of fileName!)
+//	if (strlen(pathToScriptStr) == 0)
+//		pathToScriptStr = ListMatch(fileList, "*:install.itx")
+//		if (strlen(pathToScriptStr) == 0)
+//			pathToScriptStr = ListMatch(fileList, "*:install" + system + ".itx")
+//		endif
+//	endif
 		
 	// listMatch returns a list, and will always have separator at end
-	pathToScriptStr = StringFromList(0,pathToScriptStr)		// keep only the first item from the list, no trailing separator.
+	pathToScriptStr = StringFromList(0, pathToScriptStr)		// keep only the first item from the list, no trailing separator.
 	string scriptFile = ParseFilePath(0, pathToScriptStr, ":", 1, 0)
 	if (strlen(pathToScriptStr)) // script could do naughty things, so ask before allowing it to run
 		sprintf msg, "Run installation script?\r%s was downloaded from %s", scriptFile, url
@@ -2537,6 +2623,17 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 	WriteToHistory(cmd, prefs, 0)
 	
 	return 1
+end
+
+// returns 1 for a file indentified as a standalone install script
+function CheckScript(string filePath)
+	if (GrepString(filePath, "(?i).itx$"))
+		Grep /Z/Q/E="(?i)^X // standalone install script" filePath
+		if (V_value)
+			return 1
+		endif
+	endif
+	return 0
 end
 
 // Install from a local file:
@@ -2631,7 +2728,8 @@ function InstallFile(filePathList, [path, projectID, shortTitle, version])
 		// move files/folders to destination
 		if (isZip)
 			// test to find out which files will overwritten
-			fileList = MergeFolder(unzipPathStr, path, test=1)		
+			fileList = MergeFolder(unzipPathStr, path, test=1, ignore=ksIgnoreFilesList)
+			
 			if (ItemsInList(fileList))			
 				cmd = GenerateOverwriteAlertString(filelist, rootPath=path)
 				DoAlert 1, cmd
@@ -2641,7 +2739,7 @@ function InstallFile(filePathList, [path, projectID, shortTitle, version])
 				endif
 			endif
 			// move files into user procedures folder
-			fileList = MergeFolder(unzipPathStr, path, killSourceFolder=0)
+			fileList = MergeFolder(unzipPathStr, path, killSourceFolder=0, ignore=ksIgnoreFilesList)
 			int numFiles = ItemsInList(fileList)
 			for (i=0;i<numFiles;i+=1)
 				fileName = StringFromList(i, fileList) // this is full path to file
@@ -2734,15 +2832,29 @@ function UninstallProject(string projectID)
 	return 1
 end
 
-//function CreateAlias(string fileName)
-//
-//	if(stringmatch(fileName, "*.ihf"))
-//
-//	elseif(stringmatch(fileName, "*.xop"))
-//
+//function CreateAlias(string targetPathStr)
+//	
+//	string folderPathStr = "" 
+//	
+//	if (stringmatch(targetPathStr, "*.ihf"))
+//		folderPathStr = SpecialDirPath("Igor Pro User Files", 0, 0, 0)+"Igor Help Files:"
+//	elseif (stringmatch(targetPathStr, "*.xop"))
+//		folderPathStr = SpecialDirPath("Igor Pro User Files", 0, 0, 0)
+//		if (grepstring(stringbykey("IGORKIND", igorinfo(0)), ".*64.*"))
+//			folderPathStr += "Igor Extensions (64-bit):"
+//		else
+//			folderPathStr += "Igor Extensions:"
+//		endif
 //	else
 //		print "installer: unsupported file type for alias creation"
+//		return 0
 //	endif
+//	
+//	if (strlen(FindAlias(folderPathStr, targetPathStr)))
+//		return 0
+//	endif
+//	
+//	string strAlias = ""
 //
 //end
 
@@ -3059,6 +3171,11 @@ function /S LogProjectsList()
 	int i, numLines
 	// use grep to read all project lines into a string
 	Grep /Q/O/Z/E="^[0-9]+;"/LIST="\r" filePath
+	
+	if (v_flag != 0)
+		return ""
+	endif
+	
 	numLines = ItemsInList(s_value, "\r")
 	for (i=0;i<numLines;i+=1)
 		strLine = StringFromList(i, s_value, "\r")
@@ -3236,6 +3353,11 @@ function /S CacheGetProjectsList() // about 16 ms
 	int i, numLines
 	// use grep to read all project lines into a string
 	Grep /Q/O/Z/ENCG=1/LIST="\r"/E=";" filePath
+	
+	if (V_flag != 0)
+		return ""
+	endif
+	
 	numLines = ItemsInList(s_value, "\r")
 	for (i=0;i<numLines;i+=1)
 		strLine = StringFromList(i, s_value, "\r")
@@ -3502,33 +3624,70 @@ end
 
 // this is an emergency repair function.
 // uses a fixed url to grab a recent working version.
-function RepairUpdater()
+function RepairUpdater([int silently])
+	
+	silently = ParamIsDefault(silently) ? 0 : silently
 	
 	STRUCT PackagePrefs prefs
 	LoadPrefs(prefs)
 
 	URLRequest /time=(prefs.pageTimeout)/Z url=ksGitHub
 	if (V_flag)
-		WriteToHistory("Updater could not be repaired", prefs, 0)
-		return 0
+		return silently ? 0 : WriteToHistory("Updater could not be repaired", prefs, 0) < -Inf
 	endif
 
-	wave /T wProc = ListToTextWave(S_serverResponse, "\n")	
+	wave /T wProc = ListToTextWave(S_serverResponse, "\n")
 	variable GitHubVersion
 	Grep /Q/E="(?i)^#pragma[\s]*version[\s]*="/LIST/Z wProc
+	
+	if (v_flag != 0)
+		return silently ? 0 : WriteToHistory("Updater could not be repaired", prefs, 0) < -Inf
+	endif
+	
 	s_value = LowerStr(TrimString(s_value, 1))
 	sscanf s_value, "#pragma version = %f", GitHubVersion
 	if (V_flag!=1 || GitHubVersion<=0)
-		WriteToHistory("Updater could not be repaired", prefs, 0)
-		return 0
-	endif 
+		return silently ? 0 : WriteToHistory("Updater could not be repaired", prefs, 0) < -Inf
+	endif
 	
 	if (GetThisVersion() >= GitHubVersion)
-		WriteToHistory("Repair attempted: no new version found", prefs, 0)
+		return silently ? 0 : WriteToHistory("Repair attempted: no new version found", prefs, 0) < -Inf
+	endif
+		
+	// does this replace the eol in the updater.ipf file? What would happen then?
+	return ItemsInList(UpdateFile(FunctionPath(""), ksGitHub, "8197", shortTitle="Updater", localVersion=GetThisVersion(), newVersion=GitHubVersion))
+end
+
+
+// this needs to be robust.
+// maybe check for correct EoL?
+threadsafe function GetGitHubVersion(int timeout)
+	
+	URLRequest /time=(timeout)/Z url=ksGitHub
+	if (V_flag)
 		return 0
 	endif
 
-	UpdateFile(FunctionPath(""), ksGitHub, "8197", shortTitle="Updater", localVersion=GetThisVersion(), newVersion=GitHubVersion)
+	wave /T wProc = ListToTextWave(S_serverResponse, "\n")
+	
+	if (numpnts(wProc) < 2)
+		wave /T wProc = ListToTextWave(S_serverResponse, "\r")
+	endif
+	
+	variable GitHubVersion
+	Grep /Q/E="(?i)^#pragma[\s]*version[\s]*="/LIST/Z wProc
+	
+	if (v_flag != 0)
+		return 0
+	endif
+	
+	s_value = LowerStr(TrimString(s_value, 1))
+	sscanf s_value, "#pragma version = %f", GitHubVersion
+	if (V_flag!=1)
+		return 0
+	endif
+	
+	return GitHubVersion
 end
 
 
@@ -4498,7 +4657,7 @@ function InstallerListBoxProc(STRUCT WMListboxAction &s)
 					Button btnInstallOrUpdate, win=InstallerPanel, disable=2-2*(stringmatch(s.listWave[v_value][1],"*update available"))
 				endif
 				#ifdef testing
-					Button btnInstallOrUpdate, win=InstallerPanel, disable=0
+				Button btnInstallOrUpdate, win=InstallerPanel, disable=0
 				#endif
 				return 0
 			endif
@@ -4517,7 +4676,7 @@ function InstallerListBoxProc(STRUCT WMListboxAction &s)
 					Button btnInstallOrUpdate, win=InstallerPanel, disable=2-2*(cmpstr(s.listWave[s.row][1],"update available")==0)
 				endif
 				#ifdef testing
-					Button btnInstallOrUpdate, win=InstallerPanel, disable=0
+				Button btnInstallOrUpdate, win=InstallerPanel, disable=0
 				#endif
 				return 0
 			endif
@@ -4675,13 +4834,13 @@ function UpdateListboxWave(string str)
 	ResetColumnLabels() // maintain backward compatibility
 	
 	switch(selectedTab)
-		case 0:		// projects list
+		case 0: // projects list
 			wave /T FullList = dfr:ProjectsFullList, DisplayList = dfr:ProjectsDisplayList
 			wave /T matchlist = dfr:ProjectsMatchList, HelpList = dfr:ProjectsHelpList
 			wave /T titles = dfr:ProjectsColTitles
 			listBoxName = "listboxInstall"
 			break
-		case 1:		// updates list
+		case 1: // updates list
 			wave /T FullList = dfr:UpdatesFullList, DisplayList = dfr:UpdatesDisplayList
 			wave /T matchlist = dfr:UpdatesMatchList, HelpList = dfr:UpdatesHelpList
 			wave /T titles = dfr:UpdatesColTitles
