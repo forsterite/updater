@@ -56,19 +56,19 @@ static strconstant ksShortTitle="Updater" // the project short title on IgorExch
 // and, if your project includes a procedure file, that the version
 // number matches that of your file. If your file version is 1.03, set
 // the patch version to 03, NOT 3! Updater uses the Major and Patch
-// version fields to identify new releases. If you do not fill in at 
-// least the major version field, your project can be neither installed 
+// version fields to identify new releases. If you do not fill in at
+// least the major version field, your project can be neither installed
 // nor updated via the updater control panel.
 
-// Be aware that the version number and location of installed files are 
-// recorded in the install log on the user's computer at the time of 
-// installation. If files are moved or replaced by the user this will 
+// Be aware that the version number and location of installed files are
+// recorded in the install log on the user's computer at the time of
+// installation. If files are moved or replaced by the user this will
 // interfere with the updating function of the installer.
 
 // Design your project so that files do not have to be moved into other
 // locations after installation. You can provide an itx script as part of
 // your package if you need Igor to create shortcuts for XOPs, help
-// files, etc. Please include one of the following lines (starting with 
+// files, etc. Please include one of the following lines (starting with
 // X) in your itx file to identify it as a script to be run after
 // installation:
 
@@ -76,8 +76,8 @@ static strconstant ksShortTitle="Updater" // the project short title on IgorExch
 // X // Updater Script for Macintosh
 // X // Updater Script for Windows
 
-// note that if you use a script to create aliases and the user 
-// subsequently uninstalls the project, the aliases will not be cleaned 
+// note that if you use a script to create aliases and the user
+// subsequently uninstalls the project, the aliases will not be cleaned
 // up and an error will likely occur.
 
 // If you change the structure of your zip archive between releases,
@@ -112,8 +112,10 @@ static strconstant ksShortTitle="Updater" // the project short title on IgorExch
 
 // Required igor version is not accessible for recent project releases.
 // In older releases this information was encoded in the version string,
-// but that's not currently enforced. Updater requires Igor Pro 8+, so 
+// but that's not currently enforced. Updater requires Igor Pro 8+, so
 // projects requiring Igor 9+ may become problematic in the future.
+
+// if the user uses the Procedure Loader to load
 
 // feedback? ideas? send me a note: https: www.wavemetrics.com/user/tony
 
@@ -161,9 +163,9 @@ static function AfterFileOpenHook(refNum, fileNameStr, pathNameStr, fileTypeStr,
 	variable refNum, fileKind
 	string fileNameStr, pathNameStr, fileTypeStr, fileCreatorStr
 	
-	if (fileKind == 1 || fileKind == 2)	
+	if (fileKind == 1 || fileKind == 2)
 		CtrlNamedBackground BGUpdaterStartDL, Proc=updater#StartBackgroundCheck, start
-	endif	
+	endif
 	return 0
 end
 
@@ -171,14 +173,14 @@ end
 function StartBackgroundCheck(STRUCT WMBackgroundStruct &s)
 	
 	#ifdef debug
-	print "StartBackgroundCheck() started"
+	Print "StartBackgroundCheck() started"
 	#endif
 	
 	STRUCT PackagePrefs prefs
 	LoadPrefs(prefs)
 	if ( (datetime-prefs.lastCheck) < prefs.frequency)
 		#ifdef debug
-		print "StartBackgroundCheck() completed without starting premptive thread"
+		Print "StartBackgroundCheck() completed without starting premptive thread"
 		#endif
 		return 1 // Getting here should be fast!
 	endif
@@ -234,14 +236,14 @@ function StartBackgroundCheck(STRUCT WMBackgroundStruct &s)
 	
 	// preemptive thread is now downloading
 	#ifdef debug
-	print "PreemptiveDownloader thread started"
+	Print "PreemptiveDownloader thread started"
 	#endif
 	
 	// start cooperative BG task to deal with downloads when they're done
 	CtrlNamedBackground BGCheck, period=5*60, Proc=BackgroundCheck, start
 	
 	#ifdef debug
-	print "Cooperative BG task started with period 5s"
+	Print "Cooperative BG task started with period 5s"
 	#endif
 	
 //	ExperimentModified modified
@@ -311,7 +313,7 @@ threadsafe function PreemptiveDownloader()
 	KillDataFolder dfrIn
 	
 	#ifdef debug
-	print "PreemptiveDownloader() finished"
+	Print "PreemptiveDownloader() finished"
 	#endif
 	return 0
 end
@@ -418,7 +420,7 @@ threadsafe function /WAVE DownloadProjectsList(variable timeout)
 			endif
 
 			sprintf strLine, "%s;%s;%s;%s;%s;%s;%s;%s;", projectID, strDate, strName, strAuthor, strPublished, strViews, strType, strUserNum
-			if (itemsinlist(strLine) != 8)
+			if (ItemsInList(strLine) != 8)
 				continue // an extra semicolon would corrupt the cache
 			endif
 			AllProjectsWave[numpnts(AllProjectsWave)] = {strLine}
@@ -439,7 +441,7 @@ function BackgroundCheck(STRUCT WMBackgroundStruct &s)
 	DFREF dfr = ThreadGroupGetDFR(threadGroupID, 0) // Get free data folder from output queue
 	if ( DataFolderRefStatus(dfr) == 0 )
 		#ifdef debug
-		print "premptive task still running"
+		Print "premptive task still running"
 		#endif
 		return 0 // task repeats in main thread until folder is ready
 	endif
@@ -453,12 +455,12 @@ function BackgroundCheck(STRUCT WMBackgroundStruct &s)
 	CachePutWave(w_AllProjectsDL, 0)
 	CachePutWave(w_InstalledProjectsDL, 1)
 	
-	// check status of each project	
+	// check status of each project
 	variable remote
 	int i
-	int numProjects = DimSize(w_InstalledProjectsDL, 0)	
-	int UpdateAvailable = 0, notInstalled = 0
-	string fileStatus, projectID, strList	
+	int numProjects = DimSize(w_InstalledProjectsDL, 0)
+	int UpdateAvailable = 0, notInstalled = 0, checkGit = 1
+	string fileStatus, projectID, strList
 		
 //	ReleaseCacheDate;shortTitle;remote;system;releaseDate;releaseURL;releaseIgorVersion;releaseInfo;
 		
@@ -472,20 +474,20 @@ function BackgroundCheck(STRUCT WMBackgroundStruct &s)
 		if (strlen(fileStatus) && cmpstr(fileStatus, "complete"))
 			// installed but not complete
 			continue
-		endif		
-		remote = str2num(stringfromlist(3, strList)) //NumberByKey("remote", keyList)
+		endif
+		remote = str2num(StringFromList(3, strList)) //NumberByKey("remote", keyList)
 		
 		if ((w_InstalledVersions[i] + 1e-5) < remote) // small increment corrects for single precision floating point representation
-			string strName = stringfromlist(2, strList) // StringByKey("shortTitle", keyList)
+			string strName = StringFromList(2, strList) // StringByKey("shortTitle", keyList)
 //			strName = selectstring ((strlen(strName)>0), StringByKey("name", keyList), strName)
 			string cmd = ""
 			sprintf cmd, "New project release found: %s %0.2f\r", strName, remote
-			WriteToHistory(cmd, prefs, 0)		
+			WriteToHistory(cmd, prefs, 0)
 			UpdateAvailable += 1
 			if (strlen(fileStatus) == 0)
 				notInstalled += 1
 			endif
-			// if the new release is not compatible with current Igor version 
+			// if the new release is not compatible with current Igor version
 			// we will not find out until an update is attempted.
 		endif
 	endfor
@@ -513,14 +515,20 @@ function BackgroundCheck(STRUCT WMBackgroundStruct &s)
 			
 			SavePackagePreferences ksPackageName, ksPrefsFileName, 0, prefs
 			makeInstallerPanel()	// use the data we stashed in the cache to create panel
+			checkGit = 0 // don't check github version if user will try to update via panel
 		endif
 	endif
 	
-	NVAR /SDFR=dfr GitVer = GitVer
-	if (GitVer && GitVer>GetThisVersion())
-		DoAlert 1, "It looks like Updater may need to be repaired\r\rDo you want to replace with version " + num2str(GitVer) + "?"
-		if (v_flag == 1) // yes
-			RepairUpdater()
+	if (checkGit)
+		NVAR /SDFR=dfr GitVer = GitVer
+		#ifdef debug
+		Print "found GitHub version", GitVer
+		#endif
+		if (GitVer && GitVer>GetThisVersion())	
+			DoAlert 1, "It looks like Updater may need to be repaired\r\rDo you want to update to version " + num2str(GitVer) + "?"
+			if (v_flag == 1) // yes
+				RepairUpdater()
+			endif
 		endif
 	endif
 	
@@ -529,7 +537,7 @@ function BackgroundCheck(STRUCT WMBackgroundStruct &s)
 	SavePackagePreferences ksPackageName, ksPrefsFileName, 0, prefs
 	
 	#ifdef debug
-	print "premptive task complete, number of updates available =", UpdateAvailable
+	Print "premptive task complete, number of updates available =", UpdateAvailable
 	#endif
 	
 	return 1 // bg task doesn't repeat
@@ -543,7 +551,7 @@ strconstant ksPackageName = Updater
 strconstant ksPrefsFileName = UpdaterPrefs.bin
 constant kPrefsVersion = 100
 
-Structure PackagePrefs
+structure PackagePrefs
 	uint32	 version		// 4 bytes, structure version
 	uint32 frequency	// 4 bytes
 	uint16 pagetimeout	// 2 bytes
@@ -556,10 +564,10 @@ Structure PackagePrefs
 	uint32 lastCheck	// 4 bytes
 							// 28 bytes used
 	uint32 reserved[121]	// 484 bytes reserved for future use
-EndStructure // 512 bytes
+endstructure // 512 bytes
 
 // set prefs structure to default values
-function PrefsSetDefault(STRUCT PackagePrefs &prefs)		
+function PrefsSetDefault(STRUCT PackagePrefs &prefs)
 	prefs.version = kPrefsVersion
 	prefs.frequency = 604800 // weekly
 	prefs.pagetimeout = 6
@@ -579,7 +587,7 @@ function PrefsSetDefault(STRUCT PackagePrefs &prefs)
 	endfor
 end
 
-function LoadPrefs(STRUCT PackagePrefs &prefs)	
+function LoadPrefs(STRUCT PackagePrefs &prefs)
 	LoadPackagePreferences ksPackageName, ksPrefsFileName, 0, prefs
 	if (V_flag!=0 || V_bytesRead==0 || prefs.version!=kPrefsVersion)
 		PrefsSetDefault(prefs)
@@ -639,7 +647,7 @@ function MakePrefsPanel()
 			frequencyPopMode = 5 // never
 	endswitch
 	
-	NewPanel /K=1/N=UpdaterPrefsPanel/W=(WL,WT,WL+215,WT+375) as "Settings [" + num2str(GetThisVersion()) + "]"
+	NewPanel /K=1/N=UpdaterPrefsPanel/W=(WL,WT,WL+215,WT+375) as "Settings [" + GetPragmaString("version", functionpath("")) + "]"
 	ModifyPanel /W=UpdaterPrefsPanel, fixedSize=1, noEdit=1
 	
 	variable left = 15
@@ -678,11 +686,11 @@ function MakePrefsPanel()
 	top += 30
 	CheckBox checkBackups,win=UpdaterPrefsPanel,pos={left,top},size={141.00,16.00},title="Backup Files Replaced  \rDuring Install or Update"
 													// maybe simply "Backup Files Before Replacing"
-	CheckBox checkBackups,win=UpdaterPrefsPanel,fSize=12,value=prefs.options&1	
+	CheckBox checkBackups,win=UpdaterPrefsPanel,fSize=12,value=prefs.options&1
 	CheckBox checkBackups,win=UpdaterPrefsPanel,help={"Backup files to a folder on the desktop"}
-	top += 35		
+	top += 35
 	CheckBox checkHistory,win=UpdaterPrefsPanel,pos={left,top},size={141.00,16.00},title="Write to Experiment History"
-	CheckBox checkHistory,win=UpdaterPrefsPanel,fSize=12,value=prefs.options&2	
+	CheckBox checkHistory,win=UpdaterPrefsPanel,fSize=12,value=prefs.options&2
 	CheckBox checkHistory,win=UpdaterPrefsPanel,help={"Mirror history file entries to experiment history"}
 	top += 20
 	CheckBox checkBigger,win=UpdaterPrefsPanel,pos={left,top},size={141.00,16.00},title="Bigger Panel"
@@ -714,7 +722,7 @@ function PrefsButtonProc(STRUCT WMButtonAction &s)
 		return 0
 	endif
 	
-	if (cmpstr(s.ctrlName, "BtnRepair") == 0)	
+	if (cmpstr(s.ctrlName, "BtnRepair") == 0)
 		KillWindow /Z $s.win
 		RepairUpdater()
 		return 0
@@ -725,7 +733,7 @@ function PrefsButtonProc(STRUCT WMButtonAction &s)
 	endif
 	if (cmpstr(s.ctrlName, "BtnHistory") == 0)
 		string filePath = GetInstallerFilePath(ksHistoryFile)
-		if (winType("HistoryNotebook") == 5)
+		if (WinType("HistoryNotebook") == 5)
 			DoWindow /F HistoryNotebook
 		elseif (s.eventMod & 4) // option/alt
 			OpenNotebook /K=1/Z/N=HistoryNotebook filePath
@@ -742,7 +750,7 @@ function PrefsButtonProc(STRUCT WMButtonAction &s)
 	KillWindow /Z UpdaterPrefsPanel
 	if (redraw)
 		PrefsSaveWindowPosition(s.win)
-		makeInstallerPanel()
+		MakeInstallerPanel()
 	endif
 	UpdateListboxWave(fGetStub())
 	return 0
@@ -752,7 +760,7 @@ end
 function hookPrefsPanel(STRUCT WMWinHookStruct &s)
 	if (s.eventCode != 11)
 		return 0
-	endif	
+	endif
 	if (s.keycode==13 || s.keycode==3) // enter or return
 		STRUCT WMButtonAction sb
 		sb.ctrlName = "ButtonSave"
@@ -778,7 +786,7 @@ function PrefsSync()
 	ControlInfo /W=UpdaterPrefsPanel checkBigger
 	int redrawPanel = 0
 	if (v_flag == 2)
-		redrawPanel = ((prefs.paneloptions&2) != (2*v_value))	
+		redrawPanel = ((prefs.paneloptions&2) != (2*v_value))
 		prefs.paneloptions = (prefs.paneloptions & ~2) | (2 * v_value)
 	endif
 	
@@ -914,7 +922,7 @@ end
 
 threadsafe function SetDimLabels(string strList, int dim, wave w)
 	int numLabels = ItemsInList(strList)
-	int i		
+	int i
 	if (numLabels != DimSize(w, dim))
 		return 0
 	endif
@@ -958,7 +966,7 @@ function /S UpdateFile(installPath, url, projectID, [shortTitle, localVersion, n
 	fileExt = ParseFilePath(4, filePath, ":", 0, 0)
 	
 	if (cmpstr(fileExt, downloadFileExt))
-		sprintf cmd, "Could not match file type at\r%s\rand %s\r", url, filePath		
+		sprintf cmd, "Could not match file type at\r%s\rand %s\r", url, filePath
 		WriteToHistory(cmd, prefs, 1)
 		return ""
 	endif
@@ -979,7 +987,7 @@ function /S UpdateFile(installPath, url, projectID, [shortTitle, localVersion, n
 		cmd += "the file from\r" + url + "?"
 		DoAlert 1, cmd
 		if (v_flag == 2)
-			sprintf cmd, "Update for %s cancelled\r", shortTitle		
+			sprintf cmd, "Update for %s cancelled\r", shortTitle
 			WriteToHistory(cmd, prefs, 0)
 			return ""
 		endif
@@ -1043,7 +1051,7 @@ function /S UpdateZip(filePath, url, projectID, [shortTitle, localVersion, newVe
 	
 	string archivePathStr, archiveName, unzipPathStr, fileList, folderList, fileName
 	string ipfName, packagePathStr, installPathStr
-	string oldFiles = "", staleFiles = "", cmd = "", backupPathStr=""
+	string oldFiles = "", staleFiles = "", cmd = "", backupPathStr = ""
 	string downloadPathStr = SpecialDirPath(ksDownloadLocation,0,0,0) + "TonyInstallerTemp:"
 	int i
 	
@@ -1079,7 +1087,7 @@ function /S UpdateZip(filePath, url, projectID, [shortTitle, localVersion, newVe
 	
 	#ifdef testing
 	variable refnum
-	Open /R/D /F="ZIP Files (*.zip):.zip;" /M="Looking for ZIP file..." refnum
+	Open /R/D/F="ZIP Files (*.zip):.zip;"/M="Looking for ZIP file..." refnum
 	if (strlen(S_fileName) == 0)
 		return ""
 	endif
@@ -1122,7 +1130,7 @@ function /S UpdateZip(filePath, url, projectID, [shortTitle, localVersion, newVe
 	KillPath /Z unzipPath
 		
 	// ignore pesky __MACOSX folder, and other folders listed in ignoreFoldersList
-	folderList = RemoveFromListWC(folderList, ksIgnoreFoldersList)	
+	folderList = RemoveFromListWC(folderList, ksIgnoreFoldersList)
 	fileList = RemoveFromListWC(fileList, ksIgnoreFilesList)
 	
 	// check number of files and folders at root of inflated archive
@@ -1163,9 +1171,9 @@ function /S UpdateZip(filePath, url, projectID, [shortTitle, localVersion, newVe
 
 	// test to find out which files will be overwritten
 	fileList = MergeFolder(unzipPathStr, installPathStr, test=1, ignore=ksIgnoreFilesList)
-	numFiles = ItemsInList(fileList)	
+	numFiles = ItemsInList(fileList)
 	oldFiles = LogGetFileList(projectID) // file list from log (if log exists)
-	staleFiles = RemoveFromList(fileList, oldFiles, ";", 0) // files to be removed	
+	staleFiles = RemoveFromList(fileList, oldFiles, ";", 0) // files to be removed
 	oldFiles = fileList // files to be overwritten
 	if (strlen(staleFiles))
 		oldFiles = AddListItem(staleFiles, oldFiles)
@@ -1260,7 +1268,7 @@ function MoveFiles(string fileList, string fromPath, string toPath)
 end
 
 function Update(string filePath, string url, string projectID)
-	string fileType = ParseFilePath(4, url,":", 0, 0)
+	string fileType = ParseFilePath(4, url, ":", 0, 0)
 	string fileList = ""
 	if (stringmatch(fileType, "zip"))
 		fileList = UpdateZip(filePath, url, projectID)
@@ -1269,7 +1277,7 @@ function Update(string filePath, string url, string projectID)
 	elseif (stringmatch(fileType, "xop"))
 		// can only update xop if we have info from install log
 	endif
-	return (strlen(fileList) > 0)
+	return (ItemsInList(fileList))
 end
 
 // this is for updates requested by IgorExchange Installer Panel
@@ -1350,36 +1358,42 @@ end
 // extract procedure version from file
 threadsafe function GetProcVersion(string filePath)
 	variable procVersion
-	Grep /Q/E="(?i)^#pragma[\s]*version[\s]*=" /LIST/Z filePath
+	variable noVersion = 0	
+	Grep /Q/E="(?i)^#pragma[\s]*version[\s]*="/LIST/Z filePath
 	if (v_flag != 0)
-		return 0
+		return noVersion
 	endif
 	s_value = LowerStr(TrimString(s_value, 1))
 	sscanf s_value, "#pragma version = %f", procVersion
-	if (V_flag!=1 || procVersion<=0)
-		return 0
-	endif
-	return procVersion
+	return (V_flag!=1 || procVersion<=0) ? noVersion : procVersion
 end
 
+// non-threadsafe wrapper
 function GetThisVersion()
-	string str = ReplaceString("\n", ProcedureText("", 0, "Updater.ipf [updater]"), "\r")
-	wave /T ProcText = ListToTextWave(str, "\r")
-	variable version = 0
-	Grep /Q/E="(?i)^#pragma[\s]*version[\s]*=" /LIST/Z ProcText
-	s_value = LowerStr(TrimString(s_value, 1))
-	sscanf s_value, "#pragma version = %f", version
-	return version
+	return GetProcVersion(FunctionPath(""))
 end
+
+//function ProcedureVersion2(string win)	
+//	variable noversion = 0 // default value when no version is found	
+//	string filePath = FunctionPath("")
+//	string s_exp = "(?i)^#pragma[\s]*" + strPragma + "[\s]*="
+//	Grep /Q/E=s_exp/LIST/Z filePath
+//	if (v_flag != 0)
+//		return noversion
+//	endif
+//	variable result
+//	sscanf s_value, "#pragma " + strpragma + " = %g", result
+//	return v_flag ? result : noversion
+//end
 
 // extract project ID from file and return as string
 function /S GetProjectIDString(string filePath)
-	variable projectID = GetUpdaterConstantFromFile("kProjectID", filePath)
+	variable projectID = GetConstantFromFile("kProjectID", filePath)
 	if (numtype(projectID) == 0)
 		return num2istr(projectID)
 	endif
 	// for backward compatibility, try getting projectID from all releases URL
-	string url = GetStringConst("ksLocation", filePath)
+	string url = GetStringConstFromFile("ksLocation", filePath)
 	return ParseFilePath(0, url, "/", 1, 0) // returns "" on failure
 end
 
@@ -1387,7 +1401,7 @@ function /S GetPragmaString(string strPragma, string filePath)
 	if (isFile(filePath) == 0)
 		return ""
 	endif
-	string s_exp="(?i)^#pragma[\s]*"+strPragma+"[\s]*="
+	string s_exp = "(?i)^#pragma[\s]*" + strPragma + "[\s]*="
 	Grep /Q/E=s_exp/LIST/Z filePath
 	if (v_flag != 0)
 		return ""
@@ -1399,7 +1413,7 @@ function /S GetPragmaString(string strPragma, string filePath)
 	endif
 	str = str[vpos+1,Inf]
 	vpos = strsearch(str, "//", 0)
-	if (vpos>2)
+	if (vpos > 2)
 		str = str[0,vpos-1]
 	endif
 	return TrimString(str, 1)
@@ -1415,16 +1429,17 @@ function GetPragmaVariable(string strPragma, string filePath)
 		return NaN
 	endif
 	variable result
+	s_value = LowerStr(TrimString(s_value, 1))
 	sscanf s_value, "#pragma " + strpragma + " = %g", result
 	return v_flag ? result : NaN
 end
 
-// maybe better to use simply getStringConst("ksShortTitle", filePath)
+// maybe better to use simply GetStringConstFromFile("ksShortTitle", filePath)
 function /S GetShortTitle(string filePath)
 	variable selStart, selEnd
-	string shortTitle = GetStringConst("ksShortTitle", filePath)
+	string shortTitle = GetStringConstFromFile("ksShortTitle", filePath)
 	if (strlen(shortTitle) == 0)
-		shortTitle = GetStringConst("ksShortName", filePath) // for backward compatibility
+		shortTitle = GetStringConstFromFile("ksShortName", filePath) // for backward compatibility
 	endif
 	if (strlen(shortTitle) == 0)
 		Grep /Q/E="(?i)#pragma[\s]*moduleName[\s]*=" /LIST/Z filePath
@@ -1434,7 +1449,7 @@ function /S GetShortTitle(string filePath)
 		endif
 		
 		if (strlen(s_value) == 0)
-			Grep /Q/E="(?i)#pragma[\s]*IndependentModule[\s]*=" /LIST/Z filePath
+			Grep /Q/E="(?i)#pragma[\s]*IndependentModule[\s]*="/LIST/Z filePath
 			if (v_flag != 0 || strlen(s_value) == 0)
 				return ""
 			endif
@@ -1449,7 +1464,7 @@ function /S GetShortTitle(string filePath)
 end
 
 // extract a static string constant from a procedure file by reading from disk
-function /S GetStringConst(string constantNameStr, string filePath)
+function /S GetStringConstFromFile(string constantNameStr, string filePath)
 	string s_exp = "", s_out = ""
 	sprintf s_exp, "(?i)^[\s]*static[\s]*strconstant[\s]*%s[\s]*=", constantNameStr
 	Grep /Z/Q/E=s_exp/LIST/Z filePath
@@ -1466,7 +1481,7 @@ function /S GetStringConst(string constantNameStr, string filePath)
 end
 
 // extract a static constant from a procedure file by reading from disk
-function GetUpdaterConstantFromFile(string strName, string filePath)
+function GetConstantFromFile(string strName, string filePath)
 	if (isFile(filePath) == 0)
 		return NaN
 	endif
@@ -1486,7 +1501,7 @@ end
 
 // strip trailing stuff in the output from winlist
 function /S FileNameFromProcName(string str)
-	SplitString/E=".*\.ipf" str // remove module names
+	SplitString /E=".*\.ipf" str // remove module names
 	return RemoveEnding(s_value, ".ipf")
 end
 
@@ -1547,7 +1562,7 @@ end
 
 // Parse html in AllReleasesText to find releases.
 function /WAVE ParseAllReleasesAsWave(string AllReleasesText)
-	Make /T/Free/N=(0,8) w_releases			
+	Make /T/Free/N=(0,8) w_releases
 	variable selStart = -1, selEnd = -1, blockStart, blockEnd, selFound
 	string projectName = "", releaseMajor = "", releaseMinor = "", releaseExtra = ""
 	string url = "", platform = "", versionDate = "", requiredVersion = ""
@@ -1651,8 +1666,7 @@ function /WAVE ParseAllReleasesAsWave(string AllReleasesText)
 	return w_releases
 end
 
-// Parse html in project web page to find releases.
-// Returns a string list:
+// Parse html in project web page to find releases. Returns a string list:
 // projectID;ReleaseCacheDate;title;remote;system;releaseDate;releaseURL;releaseIgorVersion;releaseInfo;
 threadsafe function /S ParseProjectPageAsList(string projectID, string WebPageText)
 	
@@ -1785,16 +1799,16 @@ threadsafe function /S ParseProjectPageAsList(string projectID, string WebPageTe
 	endif
 		
 	sprintf strLine, "%s;%s;%s;%s;%s;%s;%s;%s;%s;", projectID, strDate, name, remote, system, releaseDate, releaseURL, releaseIgorVersion, releaseInfo
-	if (itemsinlist(strLine) != 9)
+	if (ItemsInList(strLine) != 9)
 		return ""
-	endif	
+	endif
 	return strLine
 end
 
 // utility function, inflates a zip archive
 // verbose=1 to print output from ExecuteScriptText
 function UnzipArchive(string archivePathStr, string unzipPathStr, [int verbose])
-	verbose = ParamIsDefault(verbose) ? 0 : verbose 	
+	verbose = ParamIsDefault(verbose) ? 0 : verbose
 	string validExtensions = "zip;" // set to "" to skip check
 	string msg, unixCmd, cmd
 		
@@ -1838,7 +1852,7 @@ function UnzipArchive(string archivePathStr, string unzipPathStr, [int verbose])
 	// 'Expand-Archive -LiteralPath C:\archive.zip -DestinationPath C:\Dest'
 	string strVersion = StringByKey("OSVERSION", IgorInfo(3))
 	variable WinVersion = str2num(strVersion) // turns "10.1.2.3" into 10.1 and 6.23.111 into 6.2 (windows 8.0)
-	if (WinVersion<6.2)
+	if (WinVersion < 6.2)
 		Print "unzipArchive requires Windows 8 or later"
 		return 0
 	endif
@@ -1992,13 +2006,13 @@ function /T RecursiveFileList(string folderPathStr, string fileName)
 			// check files at current level
 			NewPath /O/Q/Z tempPathIXI, w_folders[folderIndex]
 
-			fileindex = 0
+			fileIndex = 0
 			do
 				indexFileName = IndexedFile(tempPathIXI, fileindex, "????")
 				if (stringmatch(indexFileName, fileName))
 					fileList = AddListItem(w_folders[folderIndex] + indexFileName, fileList)
 				endif
-				fileindex += 1
+				fileIndex += 1
 			while(strlen(indexFileName))
 			// make a list of subfolders in current folder
 			folderList = IndexedDir(tempPathIXI, -1, 0)
@@ -2031,7 +2045,7 @@ end
 // includes a check for install scripts
 function /S MergeFolder(source, destination, [killSourceFolder, backupPathStr, test, ignore])
 	string source, destination
-	variable killSourceFolder, test
+	int killSourceFolder, test
 	string backupPathStr // must be no more than one sublevel below an existing folder
 	string ignore // list of filenames that won't be moved
 	
@@ -2039,7 +2053,7 @@ function /S MergeFolder(source, destination, [killSourceFolder, backupPathStr, t
 	test = ParamIsDefault(test) ? 0 : test
 	backupPathStr = SelectString(ParamIsDefault(backupPathStr), backupPathStr, "")
 	ignore = SelectString(ParamIsDefault(ignore), ignore, "")
-	variable backup = (strlen(backupPathStr)>0)
+	int backup = (strlen(backupPathStr)>0)
 	
 	// clean up paths
 	source = ParseFilePath(2, source, ":", 0, 0)
@@ -2117,7 +2131,7 @@ function /S MergeFolder(source, destination, [killSourceFolder, backupPathStr, t
 			
 			// add the list of folders to the subfolders wave
 			for (subfolderIndex=0;subfolderIndex<ItemsInList(folderList);subfolderIndex+=1)
-				w_subfolders[numpnts(w_subfolders)] = {w_folders[folderIndex] + StringFromList(subfolderIndex,folderList) + ":"}
+				w_subfolders[numpnts(w_subfolders)] = {w_folders[folderIndex] + StringFromList(subfolderIndex, folderList) + ":"}
 				folderCount += 1
 			endfor
 		endfor
@@ -2170,19 +2184,19 @@ function install(packageList, [path, gui])
 	gui = ParamIsDefault(gui) ? 0 : gui // default to gui=0: don't use DoAlert unless necessary
 	path = SelectString(ParamIsDefault(path), path, "") // default to ""
 	if (stringmatch(path, "User Procedures"))
-		path = SpecialDirPath("Igor Pro User Files",0,0,0) + "User Procedures:"
+		path = SpecialDirPath("Igor Pro User Files", 0, 0, 0) + "User Procedures:"
 	endif
 	
 	string url = "", cmd = "", projectName = "", projectID = ""
-	int selStart, selEnd, ListIndex
+	int selStart, selEnd, i
 	int nameIsURL = 0, successfulInstalls = 0
 	
 	STRUCT PackagePrefs prefs
 	LoadPrefs(prefs)
 	
-	for (ListIndex=0;ListIndex<ItemsInList(packageList);ListIndex+=1)
+	for (i=0;i<ItemsInList(packageList);i+=1)
 		
-		projectName = StringFromList(ListIndex, packageList)
+		projectName = StringFromList(i, packageList)
 		
 		// projectName can be package short title, package URL
 		// for new releases, or filePath for a local install.
@@ -2288,7 +2302,7 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 	STRUCT PackagePrefs prefs
 	LoadPrefs(prefs)
 		
-	backupPathStr = selectstring((prefs.options & 1), "", SpecialDirPath(ksBackupLocation,0,0,0))
+	backupPathStr = SelectString((prefs.options & 1), "", SpecialDirPath(ksBackupLocation,0,0,0))
 	
 	if (strlen(url) == 0)
 		// try to download 'all releases' page
@@ -2391,7 +2405,7 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 	if (strlen(path) == 0)
 		packagePathStr = ChooseInstallLocation(projectName, restricted)
 		if (strlen(packagePathStr) == 0)
-			WriteToHistory("Install cancelled", prefs, 0)		
+			WriteToHistory("Install cancelled", prefs, 0)
 			return 0
 		endif
 	else
@@ -2444,8 +2458,8 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 			
 		// remove suffix if needed
 		fileNameNoExt = ParseFilePath(3, fileName, ":", 0, 0) // fileName without extension
-		if (kRemoveSuffix && GrepString(fileNameNoExt, "_[0-9]$"))
-			fileNameNoExt = RemoveEnding(RemoveEnding(fileNameNoExt)) // remove two characters
+		if (kRemoveSuffix && GrepString(fileNameNoExt, "_[0-9]+$"))
+			splitstring /E="(.*)_([0-9]+)$" fileNameNoExt, fileNameNoExt
 		endif
 		destFileName = fileNameNoExt + "." + fileExtension
 		destFileName = RemoveHexEncoding(destFileName)
@@ -2458,7 +2472,7 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 			endif
 			if (strlen(backupPathStr))
 				variable ver = GetProcVersion(packagePathStr + destFileName)
-				string bupFile = selectstring(ver>0, destFileName, destFileName + num2str(ver))
+				string bupFile = SelectString(ver>0, destFileName, destFileName + num2str(ver))
 				bupFile = UniqueFileName(backupPathStr, bupFile)
 				MoveFile /Z 	packagePathStr + destFileName as bupFile
 				sprintf cmd, "Created backup file: %s\r", bupFile
@@ -2492,8 +2506,8 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 		endif
 	endif
 	
-	string ShortTitleFromFile = GetStringConst("ksShortTitle", IncludeProcPath)
-	shortTitle = selectstring((strlen(ShortTitleFromFile)>0), shortTitle, ShortTitleFromFile)
+	string ShortTitleFromFile = GetStringConstFromFile("ksShortTitle", IncludeProcPath)
+	shortTitle = SelectString((strlen(ShortTitleFromFile)>0), shortTitle, ShortTitleFromFile)
 		
 	string msg = ""
 	
@@ -2534,8 +2548,8 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 	
 	// perhaps this stuff should be done before attempting to run script etc?
 	// moved the next two lines from end of this function
-	LogUpdateProject(projectID, shortTitle, packagePathStr, num2str(releaseVersion), fileList)	
-	InstallerCleanup(downloadPathStr)	
+	LogUpdateProject(projectID, shortTitle, packagePathStr, num2str(releaseVersion), fileList)
+	InstallerCleanup(downloadPathStr)
 			
 	// Look for and run itx-format installation script. Script will run
 	// from within the package folder saved in location of user's
@@ -2565,21 +2579,13 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 			pathToScriptStr = ithITX
 			break
 		endif
-		
-		// fix for one project
-		Grep /Z/Q/E="(?i)^X // install script for LaTeX Pictures" ithITX
-		if (V_value)
-			pathToScriptStr = ithITX
-			break
-		endif
-			
 	endfor
 	
 //	pathToScriptStr = ListMatch(fileList, "*:updaterscript.itx")
 //	if (strlen(pathToScriptStr) == 0)
 //		pathToScriptStr = ListMatch(fileList, "*:updaterscript" + system + ".itx")
 //	endif
-//	
+//
 //	// for backward compatibility. (install was a poor choice of fileName!)
 //	if (strlen(pathToScriptStr) == 0)
 //		pathToScriptStr = ListMatch(fileList, "*:install.itx")
@@ -2589,17 +2595,15 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 //	endif
 		
 	// listMatch returns a list, and will always have separator at end
-	pathToScriptStr = StringFromList(0, pathToScriptStr)		// keep only the first item from the list, no trailing separator.
+	pathToScriptStr = StringFromList(0, pathToScriptStr) // keep only the first item from the list, no trailing separator.
 	string scriptFile = ParseFilePath(0, pathToScriptStr, ":", 1, 0)
 	if (strlen(pathToScriptStr)) // script could do naughty things, so ask before allowing it to run
 		sprintf msg, "Run installation script?\r%s was downloaded from %s", scriptFile, url
-		
-		// security check here?
-		
+				
 		DoAlert 1, msg
 		if (v_flag == 1)
 			sprintf cmd, "Loadwave /T \"%s\"", pathToScriptStr
-			Execute cmd // will be printed to history		
+			Execute cmd // will be printed to history
 			WriteToHistory("Ran installation script: " + scriptFile, prefs, 0)
 		endif
 	endif
@@ -2627,7 +2631,7 @@ end
 
 // returns 1 for a file indentified as a standalone install script
 function CheckScript(string filePath)
-	if (GrepString(filePath, "(?i).itx$"))
+	if (GrepString(filePath, "(?i)\.itx$"))
 		Grep /Z/Q/E="(?i)^X // standalone install script" filePath
 		if (V_value)
 			return 1
@@ -2685,7 +2689,7 @@ function InstallFile(filePathList, [path, projectID, shortTitle, version])
 			path = GetIgorExtensionsPath()
 		endif
 		
-		isZip = GrepString(filePath,"(?i).zip$")
+		isZip = GrepString(filePath,"(?i)\.zip$")
 		
 		if (isZip)
 			string archiveName = ParseFilePath(0, filePath, ":", 1, 0)
@@ -2708,7 +2712,7 @@ function InstallFile(filePathList, [path, projectID, shortTitle, version])
 			fileList = filePath
 		endif
 		
-		ipfList = ListMatch(fileList, "*.ipf")		
+		ipfList = ListMatch(fileList, "*.ipf")
 		if (ItemsInList(ipfList) == 1)
 			ipfFile = StringFromList(0,ipfList)
 			projectID = SelectString(strlen(projectID)==0, projectID, GetProjectIDString(ipfFile))
@@ -2730,7 +2734,7 @@ function InstallFile(filePathList, [path, projectID, shortTitle, version])
 			// test to find out which files will overwritten
 			fileList = MergeFolder(unzipPathStr, path, test=1, ignore=ksIgnoreFilesList)
 			
-			if (ItemsInList(fileList))			
+			if (ItemsInList(fileList))
 				cmd = GenerateOverwriteAlertString(filelist, rootPath=path)
 				DoAlert 1, cmd
 				if (v_flag == 2)
@@ -2833,9 +2837,9 @@ function UninstallProject(string projectID)
 end
 
 //function CreateAlias(string targetPathStr)
-//	
-//	string folderPathStr = "" 
-//	
+//
+//	string folderPathStr = ""
+//
 //	if (stringmatch(targetPathStr, "*.ihf"))
 //		folderPathStr = SpecialDirPath("Igor Pro User Files", 0, 0, 0)+"Igor Help Files:"
 //	elseif (stringmatch(targetPathStr, "*.xop"))
@@ -2849,11 +2853,11 @@ end
 //		print "installer: unsupported file type for alias creation"
 //		return 0
 //	endif
-//	
+//
 //	if (strlen(FindAlias(folderPathStr, targetPathStr)))
 //		return 0
 //	endif
-//	
+//
 //	string strAlias = ""
 //
 //end
@@ -2969,7 +2973,9 @@ function LogUpdateProject(projectID, shortTitle, installPath, newVersion, fileLi
 	sprintf s_out "%s;%s;%s;%s;%s;%s;;;;;", projectID, shortTitle, newVersion, num2istr(datetime), root, installSubPath
 	for (i=0;i<ItemsInList(fileList);i+=1)
 		file = StringFromList(i, fileList)
-		if (stringmatch(file, installPath + "*")) // this should always be true
+		// usually filelist will be a list of full paths, but if we're
+		// using UpdateFile to replace a file it may contain just the filename.
+		if (stringmatch(file, installPath + "*"))
 			file = file[strlen(installPath), Inf]
 		endif
 		s_out += file + ";"
@@ -3297,11 +3303,11 @@ function /S GetInstalledFilesSummary(string projectID)
 		numFiles += 1
 		if (isFile(strFile) == 0)
 			numMissing += 1
-		elseif (GrepString(strFile,"(?i).ipf$"))
+		elseif (GrepString(strFile,"(?i)\.ipf$"))
 			numIPF += 1
-		elseif (GrepString(strFile,"(?i).xop$"))
+		elseif (GrepString(strFile,"(?i)\.xop$"))
 			numXOP += 1
-		elseif (GrepString(strFile,"(?i).pxp$"))
+		elseif (GrepString(strFile,"(?i)\.pxp$"))
 			numPXP += 1
 		else
 			numOther += 1
@@ -3338,7 +3344,7 @@ end
 // projectID;ProjectCacheDate;title;author;published;views;type;userNum;
 // ReleaseCacheDate;shortTitle;remote;system;releaseDate;releaseURL;releaseIgorVersion;releaseInfo
 // Items 1-7 are extracted from the project index pages.
-// The rest come from project web pages, which are parsed only for 
+// The rest come from project web pages, which are parsed only for
 // projects that exist in user procedures
 
 // GetInstallerFilePath(ksCacheFile) creates a cache file if one doesn't exist
@@ -3412,7 +3418,7 @@ function CachePutKeylist(string keyList)	// about 25 ms
 	string projectID = StringByKey("projectID", keyList)
 	if (strlen(projectID) == 0)
 		return 0
-	endif	
+	endif
 	string filePath = GetInstallerFilePath(ksCacheFile), oldKeyList = CacheGetKeyList(projectID)
 	keyList += oldKeyList // items not in new keyList will be set to their value (if any) in oldKeyList
 
@@ -3448,7 +3454,7 @@ function CachePutWave(wave /T ProjectsWave, int updates)
 		return 0
 	endif
 	
-	// load cache, if it exists, as text wave	
+	// load cache, if it exists, as text wave
 	wave /T CacheWave = CacheLoad()
 	
 	string s_exp = "", strList = "", projectID = "", strLine = ""
@@ -3481,15 +3487,15 @@ function CachePutWave(wave /T ProjectsWave, int updates)
 			while (ItemsInList(strList) > 16)
 		endif
 		
-		// remove first item (projectID) from list	
+		// remove first item (projectID) from list
 		strLine = RemoveListItem(0, ProjectsWave[i])
 		
 		if (updates)
-			// insert new update info into list string		
-			strList = ReplaceListItem(8, strList, removeending(strLine, ";"), numItems=8) // avoid trailing ;
+			// insert new update info into list string
+			strList = ReplaceListItem(8, strList, RemoveEnding(strLine, ";"), numItems=8) // avoid trailing ;
 		else
 			// insert new update info into list string
-			strList = ReplaceListItem(1, strList, removeending(strLine, ";"), numItems=7) // avoid trailing ;
+			strList = ReplaceListItem(1, strList, RemoveEnding(strLine, ";"), numItems=7) // avoid trailing ;
 		endif
 		
 		// write project to CacheWave
@@ -3514,12 +3520,12 @@ function /wave CacheLoad()
 		Print "* Updater error: couldn't open cache file *"
 		return CacheWave // shouldn't arrive here
 	endif
-	make /free/N=(numpnts(CacheWave)) CacheValid
+	Make /free/N=(numpnts(CacheWave)) CacheValid
 	int timeNow = datetime, oneWeek = 60 * 60 * 24 * 7
 	CacheValid = (timeNow - str2num(StringFromList(1, CacheWave[p]))) < oneWeek
 	CacheValid[0] = 1 // preserve header row
-	if (wavemin(CacheValid) == 0)
-		Extract /O/T CacheWave, CacheWave, CacheValid	
+	if (WaveMin(CacheValid) == 0)
+		Extract /O/T CacheWave, CacheWave, CacheValid
 		Grep /O/Z/E="" CacheWave as filePath
 	endif
 	return CacheWave
@@ -3561,13 +3567,13 @@ end
 // note that a trailing ; in itemStr will add an extra empty item
 function /S ReplaceListItem(int itemNum, string listStr, string itemStr, [int numItems])
 	numItems = ParamIsDefault(numItems) ? 1 : numItems
-	int numAfterRemoval = itemsinlist(listStr)-numItems
+	int numAfterRemoval = ItemsInList(listStr)-numItems
 	int i
 	for (i=0;i<numItems;i+=1)
 		listStr = RemoveListItem(itemNum, listStr)
 	endfor
 	
-	for (i=0;itemsinlist(listStr)<numAfterRemoval;i++)
+	for (i=0;ItemsInList(listStr)<numAfterRemoval;i++)
 		listStr += ";"
 	endfor
 	
@@ -3592,7 +3598,7 @@ end
 function /S ChooseInstallLocation(string packageName, int restricted)
 	int success
 	string cmd = ""
-	sprintf cmd, "Where would you like to install%s?", selectstring(strlen(packageName)>0, "", " " + packageName)
+	sprintf cmd, "Where would you like to install%s?", SelectString(strlen(packageName)>0, "", " " + packageName)
 	do
 		success = 1
 		if (restricted)
@@ -3637,6 +3643,10 @@ function RepairUpdater([int silently])
 	endif
 
 	wave /T wProc = ListToTextWave(S_serverResponse, "\n")
+	if (numpnts(wProc) < 2)
+		wave /T wProc = ListToTextWave(S_serverResponse, "\r")
+	endif
+	
 	variable GitHubVersion
 	Grep /Q/E="(?i)^#pragma[\s]*version[\s]*="/LIST/Z wProc
 	
@@ -3650,17 +3660,19 @@ function RepairUpdater([int silently])
 		return silently ? 0 : WriteToHistory("Updater could not be repaired", prefs, 0) < -Inf
 	endif
 	
-	if (GetThisVersion() >= GitHubVersion)
+	variable thisVersion = GetThisVersion()
+	if (thisVersion >= GitHubVersion)
 		return silently ? 0 : WriteToHistory("Repair attempted: no new version found", prefs, 0) < -Inf
 	endif
 		
-	// does this replace the eol in the updater.ipf file? What would happen then?
-	return ItemsInList(UpdateFile(FunctionPath(""), ksGitHub, "8197", shortTitle="Updater", localVersion=GetThisVersion(), newVersion=GitHubVersion))
+	// It seems that requesting the file from Github with URLRequest
+	// doesn't change the eol in the updater.ipf file; in S_serverResponse
+	// the /r become /n
+	return ItemsInList(UpdateFile(FunctionPath(""), ksGitHub, "8197", shortTitle="Updater", localVersion=thisVersion, newVersion=GitHubVersion))
 end
 
 
 // this needs to be robust.
-// maybe check for correct EoL?
 threadsafe function GetGitHubVersion(int timeout)
 	
 	URLRequest /time=(timeout)/Z url=ksGitHub
@@ -3696,7 +3708,7 @@ end
 function MakeInstallerPanel()
 	
 	#ifdef debug
-	execute "SetIgorOption IndependentModuleDev=1"
+	Execute "SetIgorOption IndependentModuleDev=1"
 	#endif
 	
 	// if we're rebuilding panel, record current state of popup menu
@@ -3763,7 +3775,7 @@ function MakeInstallerPanel()
 	
 	vTop += 10
 	TabControl tabs, win=InstallerPanel, pos={-10,vTop}, size={540,280}, tabLabel(0)="Projects", focusRing=0
-	TabControl tabs, win=InstallerPanel, tabLabel(1)="Updates", value=tabSelection, Proc=updater#InstallerTabProc	
+	TabControl tabs, win=InstallerPanel, tabLabel(1)="Updates", value=tabSelection, Proc=updater#InstallerTabProc
 	
 	vTop += 25
 	// Listbox for install tab
@@ -3803,7 +3815,7 @@ function MakeInstallerPanel()
 	PopupMenu popupFolder, win=InstallerPanel, pos={5,vTop}, value="Installed Projects;User Procedures Folder;Current Experiment;", mode=folder, title="Check files in ", Proc=Updater#InstallerPopupProc
 	PopupMenu popupFolder, win=InstallerPanel, disable=(tabSelection==0)
 		
-	Button btnInstallOrUpdate, win=InstallerPanel, pos={455,vTop-2}, size={60,20}, Proc=Updater#InstallerButtonProc, title=selectString(tabSelection, "Install", "Update")
+	Button btnInstallOrUpdate, win=InstallerPanel, pos={455,vTop-2}, size={60,20}, Proc=Updater#InstallerButtonProc, title=SelectString(tabSelection, "Install", "Update")
 	Button btnInstallOrUpdate, win=InstallerPanel, help={"Install selected user project"}, disable=2
 	vTop += 32
 	TitleBox statusBox, win=InstallerPanel, pos={5,vTop}, frame=0, title=""
@@ -3816,7 +3828,7 @@ function MakeInstallerPanel()
 	// resizing userdata for controls
 	Button ButtonClear,win=InstallerPanel,userdata(ResizeControlsInfo)=A"!!,GI!!#B1!!#<(!!#<(z!!#N3Bk1ctAnc('ATCZKzzzzzzzzzzzz!!#N3Bk1ctAnc('ATCZK"
 	Button ButtonClear,win=InstallerPanel,userdata(ResizeControlsInfo)+=A"zzzzzzzzzzzz!!#?(FEDG<!,6(ZF8u:@zzzzzzzzz"
-	Button ButtonClear,win=InstallerPanel,userdata(ResizeControlsInfo)+=A"zzz!!#r+D.Oh\\ASGdjF8u:@zzzzzzzzzzzz!!!"	
+	Button ButtonClear,win=InstallerPanel,userdata(ResizeControlsInfo)+=A"zzz!!#r+D.Oh\\ASGdjF8u:@zzzzzzzzzzzz!!!"
 	TabControl tabs,win=InstallerPanel,userdata(ResizeControlsInfo)=A"!!0nY!!#<(!!#Cl!!#BFz!!#](Aon#azzzzzzzzzzzzzz!!#o2B4uAezz"
 	TabControl tabs,win=InstallerPanel,userdata(ResizeControlsInfo)+=A"zzzzzzzzzzzz!!#u:DuaHi!,6(ZF8u:@zzzzzzzzz"
 	TabControl tabs,win=InstallerPanel,userdata(ResizeControlsInfo)+=A"zzz!!#?(FEDG<!-A3SF8u:@zzzzzzzzzzzz!!!"
@@ -3833,10 +3845,10 @@ function MakeInstallerPanel()
 	PopupMenu popupType,win=InstallerPanel,userdata(ResizeControlsInfo)+=A"zzz!!#?(FEDG<zzzzzzzzzzzzzz!!!"
 	PopupMenu popupFolder,win=InstallerPanel,userdata(ResizeControlsInfo)=A"!!,?X!!#B@!!#>V!!#<Xz!!#](Aon\"Qzzzzzzzzzzzzzz!!#](Aon\"Qzz"
 	PopupMenu popupFolder,win=InstallerPanel,userdata(ResizeControlsInfo)+=A"zzzzzzzzzzzz!!#?(FEDG<zzzzzzzzzzz"
-	PopupMenu popupFolder,win=InstallerPanel,userdata(ResizeControlsInfo)+=A"zzz!!#?(FEDG<zzzzzzzzzzzzzz!!!"	
+	PopupMenu popupFolder,win=InstallerPanel,userdata(ResizeControlsInfo)+=A"zzz!!#?(FEDG<zzzzzzzzzzzzzz!!!"
 	Button btnInstallOrUpdate,win=InstallerPanel,userdata(ResizeControlsInfo)= A"!!,IIJ,hrj!!#?)!!#<Xz!!#o2B4uAezzzzzzzzzzzzzz!!#o2B4uAezz"
 	Button btnInstallOrUpdate,win=InstallerPanel,userdata(ResizeControlsInfo) += A"zzzzzzzzzzzz!!#?(FEDG<!,6(ZF8u:@zzzzzzzzz"
-	Button btnInstallOrUpdate,win=InstallerPanel,userdata(ResizeControlsInfo) += A"zzz!!#?(FEDG<zzzzzzzzzzzzzz!!!"	
+	Button btnInstallOrUpdate,win=InstallerPanel,userdata(ResizeControlsInfo) += A"zzz!!#?(FEDG<zzzzzzzzzzzzzz!!!"
 	TitleBox statusBox,win=InstallerPanel,userdata(ResizeControlsInfo)=A"!!,?X!!#BP!!#@b!!#;=z!!#](Aon\"Qzzzzzzzzzzzzzz!!#](Aon\"Qzz"
 	TitleBox statusBox,win=InstallerPanel,userdata(ResizeControlsInfo)+=A"zzzzzzzzzzzz!!#?(FEDG<zzzzzzzzzzz"
 	TitleBox statusBox,win=InstallerPanel,userdata(ResizeControlsInfo)+=A"zzz!!#?(FEDG<zzzzzzzzzzzzzz!!!"
@@ -3957,7 +3969,7 @@ function ReloadProjectsList()
 		URLRequest /time=(prefs.pageTimeout)/Z url=url
 		if (V_flag)
 			sprintf cmd, "Installer could not load %s\r", url
-			WriteToHistory(cmd, prefs, 0)		
+			WriteToHistory(cmd, prefs, 0)
 			UpdateListboxWave("") // update based on anything we managed to download
 			SetPanelStatus("List may be incomplete")
 			return 0
@@ -4056,7 +4068,7 @@ function ReloadProjectsList()
 //			InsertPoints /M=0 pnt, 1, toCache
 			
 			wave /T w = ProjectsFullList
-			sprintf strLine, "%s;%s;%s;%s;%s;%s;%s;%s;" w[pnt2][%projectID], strDate, w[pnt2][%name], w[pnt2][%author], w[pnt2][%published], w[pnt2][%views], replacestring(";", w[pnt2][%type], ","), w[pnt2][%userNum]
+			sprintf strLine, "%s;%s;%s;%s;%s;%s;%s;%s;" w[pnt2][%projectID], strDate, w[pnt2][%name], w[pnt2][%author], w[pnt2][%published], w[pnt2][%views], ReplaceString(";", w[pnt2][%type], ","), w[pnt2][%userNum]
 			if (ItemsInList(strLine) == 8)
 				toCache[numpnts(toCache)] = {strLine}
 			endif
@@ -4100,7 +4112,7 @@ function /wave UserProcsProjectsWave()
 	int numRows = numpnts(wFiles)
 	Make /free/N=(numRows, 2) w
 	if (numRows)
-		w[][0] = GetUpdaterConstantFromFile("kProjectID", wFiles[p])
+		w[][0] = GetConstantFromFile("kProjectID", wFiles[p])
 		w[][1] = numtype(w[p][0])==0 ? GetProcVersion(wFiles[p]) : 0
 		int i, imax
 		imax = DimSize(w, 0)
@@ -4161,7 +4173,7 @@ function ReloadUpdatesList(int forced, int gui)
 	string procList = "", cmd = "", strExitStatus = ""
 	string keyList, projectID, strRemVer, strLocVer, filePath
 	string shortTitle, url, releaseURL, projectName, strDate, fileStatus
-	string strSystem = "", filesInfo = "", installDate = "", logEntry = ""	
+	string strSystem = "", filesInfo = "", installDate = "", logEntry = ""
 	variable CacheDate, localVersion, releaseVersion, releaseMajor, releaseMinor, releaseIgorVersion
 	variable currentIgorVersion = GetIgorVersion()
 	
@@ -4385,7 +4397,7 @@ end
 function ResortWaves(int tabNum, int sortCol)
 	// tabNum: 0 is install list, 1 is updates list
 	// sortCol: O resort according to user data
-	// non-zero: sort by column, reversing sort if column matches previous	
+	// non-zero: sort by column, reversing sort if column matches previous
 	string lb = SelectString(tabNum, "listboxInstall", "listboxUpdate")
 	DFREF dfr = root:Packages:Installer
 	if (tabNum == 0)
@@ -4504,7 +4516,7 @@ function InstallerPopupProc(STRUCT WMpopupAction &s)
 		reloadUpdatesList(1, 1)
 	else
 		UpdateListboxWave(fGetStub())
-	endif	
+	endif
 	// send a keyboard event to filter hook
 	// this updates text completion based on new popup selection
 	STRUCT WMWinHookStruct hookstruct
@@ -4513,7 +4525,7 @@ function InstallerPopupProc(STRUCT WMpopupAction &s)
 	return 0
 end
 
-function InstallerTabProc(STRUCT WMTabControlAction& s)	
+function InstallerTabProc(STRUCT WMTabControlAction& s)
 	if (s.eventCode == -1) // save some prefs before killing control panel
 		PrefsSaveWindowPosition(s.win)
 		KillDataFolder /Z root:packages:installer
@@ -4586,7 +4598,7 @@ function InstallerTabProc(STRUCT WMTabControlAction& s)
 		#endif
 	else
 		Button btnInstallOrUpdate, win=InstallerPanel, disable=2
-	endif		
+	endif
 	return 0
 end
 
@@ -4805,7 +4817,7 @@ function InstallerRightClick(STRUCT WMListboxAction &s)
 		elseif (v_flag == 3) // uninstall
 			STRUCT PackagePrefs prefs
 			LoadPrefs(prefs)
-			WriteToHistory("Uninstalling " + matchlist[s.row][%name], prefs, 0)		
+			WriteToHistory("Uninstalling " + matchlist[s.row][%name], prefs, 0)
 			UninstallProject(matchlist[s.row][%projectID])
 			ReloadUpdateslist(1, 1)
 			UpdateListboxWave(fGetStub())
@@ -4936,12 +4948,12 @@ end
 
 function /S GetUpdateURLfromFile(string filePath)
 	string url = ""
-	variable projectID = GetUpdaterConstantFromFile("kProjectID", filePath)
+	variable projectID = GetConstantFromFile("kProjectID", filePath)
 	if (numtype(projectID) == 0)
 		sprintf url, "https://www.wavemetrics.com/node/%d", projectID
 		return url
 	endif
-	url = GetStringConst("ksLOCATION", filePath)
+	url = GetStringConstFromFile("ksLOCATION", filePath)
 	return url // "" on failure
 end
 
@@ -5165,17 +5177,17 @@ end
 
 function /T fGetStub()
 	DFREF dfr = root:Packages:Installer
-	NVAR stubLen = dfr:stubLen	
+	NVAR stubLen = dfr:stubLen
 	// find and save current position
 	GetSelection Notebook, InstallerPanel#nb0, 1
-	int selEnd = V_endPos	
+	int selEnd = V_endPos
 	// select stub
-	Notebook InstallerPanel#nb0 selection={startOfFile,(0,stubLen)}	
+	Notebook InstallerPanel#nb0 selection={startOfFile,(0,stubLen)}
 	// get stub text
 	GetSelection Notebook, InstallerPanel#nb0, 3
-	string strStub = s_selection	
+	string strStub = s_selection
 	// reset position
-	Notebook InstallerPanel#nb0 selection={(0,selEnd),(0,selEnd)}, findText={"",1}	
+	Notebook InstallerPanel#nb0 selection={(0,selEnd),(0,selEnd)}, findText={"",1}
 	return strStub
 end
 
@@ -5215,7 +5227,7 @@ function /T fArrowKey(string stub, string ending, int increment, wave /T wList)
 	return (w_out[v_value][0])[stubLen,Inf]
 end
 
-// this proc pic has a transparent background. 
+// this proc pic has a transparent background.
 // Use with button ... labelBack=(65535,65535,65535,0)
 // PNG: width= 120, height= 40
 Picture fClearTextPic
@@ -5263,7 +5275,7 @@ Picture fClearTextPic
 	OU1iB"B)35J(KGFW:Tmk=?(o9_uDr[Ws5*f*uLHDIIc'.eG4MBgtKUEidV(1&"^g5==2#e"TSN&!(f
 	US7'8jaJc
 	ASCII85End
-End
+end
 
 // --------------------------- end of filter functions --------------------------
 
@@ -5486,7 +5498,7 @@ end
 // not check numbers of points in w_zapRefs waves. Wildcards okay.
 function TextWaveZapString(wave /T w, string matchStr, [wave /Z/WAVE w_zapRefs])
 	int i, j
-	for (i=numpnts(w)-1;i>=0;i-=1)	
+	for (i=numpnts(w)-1;i>=0;i-=1)
 		if (stringmatch(w[i],matchStr))
 			DeletePoints i, 1, w
 			if (WaveExists(w_zapRefs))
@@ -5507,7 +5519,7 @@ end
 
 // ------------------ end of stuff from UserProcLoader ------------------
 
-// cleans up version number in log 
+// cleans up version number in log
 // when project has been updated outside of updater
 function ResyncLog(string projectID)
 	string fileList = LogGetFileList(projectID)
@@ -5524,11 +5536,11 @@ function ResyncLog(string projectID)
 	CacheClearUpdates(projectID=projectID)
 end
 
-function WriteToHistory(string str, struct PackagePrefs &prefs, int alert)
+function WriteToHistory(string str, STRUCT PackagePrefs &prefs, int alert)
 	if (strlen(str)==0)
 		return 0
-	endif	
-	str = RemoveEnding(str, "\r") 
+	endif
+	str = RemoveEnding(str, "\r")
 	if (prefs.options & 2) // copy to experiment history
 		Print str
 	endif
@@ -5542,7 +5554,7 @@ function WriteToHistory(string str, struct PackagePrefs &prefs, int alert)
 		return 0
 	endif
 	fprintf refnum, "%s %s %s\r\n", date(), time(), str
-	Close refnum	
+	Close refnum
 	return 1
 end
 
@@ -5562,7 +5574,7 @@ menu "Misc"
 end
 #endif
 
-function PrepareProjectRelease()	
+function PrepareProjectRelease()
 	variable winIndex, moreFiles
 	string proclist = WinList("*",";","WIN:128,INDEPENDENTMODULE:1")
 	Prompt winIndex, "Select procedure", Popup, proclist
@@ -5577,10 +5589,10 @@ function PrepareProjectRelease()
 	
 	GetWindow $procedure needupdate
 	if (V_flag)
-		doalert 0, "Please save procedure file before preparing release"
+		DoAlert 0, "Please save procedure file before preparing release"
 		return 0
-	endif	
-	string filePath = GetProcWinFilePath(procedure)		
+	endif
+	string filePath = GetProcWinFilePath(procedure)
 	string projectID = GetProjectIDString(filePath)
 	string shortTitle = GetShortTitle(filePath)
 	variable version = GetProcVersion(filePath)
@@ -5622,12 +5634,12 @@ function PrepareProjectRelease()
 	
 	string archive = ""
 	// edit fileName format here
-	sprintf archive, "%s%d%02d.zip" shortTitle, floor(version), 100*(version-floor(version))	
+	sprintf archive, "%s%d%02d.zip" shortTitle, floor(version), 100*(version-floor(version))
 		
 	zipFiles(filePath, SpecialDirPath("Desktop", 0, 0, 0) + archive, verbose=0)
 	
-	// The suggestions for release identifier and version string fields 
-	// are based on the format that was enforced on the old IgorExchange 
+	// The suggestions for release identifier and version string fields
+	// are based on the format that was enforced on the old IgorExchange
 	// web site. Edit as you please.
 	printf "\r * Preparing project release for %s *\r", shortTitle
 	
@@ -5635,35 +5647,35 @@ function PrepareProjectRelease()
 	string file
 	
 	// print a warning if we find any development flag symbols defined in the package file[s]
-	for (i=itemsinlist(filepath)-1;i>=0;i--)
-		file = stringFromList(i, filepath)
-		grep /Q/E="^\s*?#define\s*debug" file
+	for (i=ItemsInList(filepath)-1;i>=0;i--)
+		file = StringFromList(i, filepath)
+		Grep /Q/E="^\s*?#define\s*debug" file
 		if (v_value)
-			printf "*** WARNING  debug is defined in %s ***\r", parseFilePath(0, file, ":", 1, 0)
+			printf "*** WARNING  debug is defined in %s ***\r", ParseFilePath(0, file, ":", 1, 0)
 		endif
-		grep /Q/E="^\s*?#define\s*test" file
+		Grep /Q/E="^\s*?#define\s*test" file
 		if (v_value)
-			printf "*** WARNING  test[ing] is defined in %s ***\r", parseFilePath(0, file, ":", 1, 0)
+			printf "*** WARNING  test[ing] is defined in %s ***\r", ParseFilePath(0, file, ":", 1, 0)
 		endif
-		grep /Q/E="^\s*?#define\s*(dev\b|developer\b)" file
+		Grep /Q/E="^\s*?#define\s*(dev\b|developer\b)" file
 		if (v_value)
-			printf "*** WARNING  dev[eloper] is defined in %s ***\r", parseFilePath(0, file, ":", 1, 0)
+			printf "*** WARNING  dev[eloper] is defined in %s ***\r", ParseFilePath(0, file, ":", 1, 0)
 		endif
 	endfor
 	
 	// check that we have a version number
 	if (numtype(version))
-		doalert 1, "No version pragma found in procedure\r\rContinue?"
+		DoAlert 1, "No version pragma found in procedure\r\rContinue?"
 		if (v_flag == 2)
 			return 0
 		endif
 	endif
 	
 	printf "Version (String) Suggestion: IGOR.%0.2f.x-%0.2f\r", IgorVer, version
-	print "\"Version - Date\" fields should be cleared"
+	Print "\"Version - Date\" fields should be cleared"
 	printf "Version - Major: %g\r", floor(version)
 	printf "Version - Patch: %g\r", mod(version, 1)*100
-	print "\"Version - Extra\" will not trigger an update notification for users"
+	Print "\"Version - Extra\" will not trigger an update notification for users"
 	printf "Release Identifier Suggestion: %s IGOR.%0.2f.x-%0.2f\r", shortTitle, IgorVer, version
 	printf "Igor Version: %g (Check that this is correct, nothing to fill on release page)\r", IgorVer
 	printf "Upload file from desktop: %s\r", archive
@@ -5672,7 +5684,7 @@ function PrepareProjectRelease()
 	DoWindow /H
 	
 	if (strlen(projectID))
-		doAlert 1, "Open project page in browser?"
+		DoAlert 1, "Open project page in browser?"
 		if (v_flag == 1)
 			BrowseURL /Z "https://www.wavemetrics.com/node/" + projectID
 		endif
@@ -5709,7 +5721,7 @@ function zipFiles(string FilePathListStr, string zipPathStr, [int verbose])
 	
 	numfiles = ItemsInList(FilePathListStr)
 	for (i=0;i<numfiles;i+=1)
-		GetFileFolderInfo /Q/Z StringFromList(i, FilePathListStr)	
+		GetFileFolderInfo /Q/Z StringFromList(i, FilePathListStr)
 		if (V_Flag || V_isFile==0)
 			printf "Could not find %s\r", StringFromList(i, FilePathListStr)
 			return 0
@@ -5729,7 +5741,7 @@ function zipFiles(string FilePathListStr, string zipPathStr, [int verbose])
 		else
 			zipFileStr = ParseFilePath(0, zipPathStr, ":", 1, 0)
 			zipPathStr = ParseFilePath(1, zipPathStr, ":", 1, 0)
-		endif		
+		endif
 		GetFileFolderInfo /Q/Z zipPathStr
 		if (V_Flag || V_isFolder==0)
 			sprintf msg, "Could not find zipPathStr folder\rCreate %s?", zipPathStr
@@ -5757,11 +5769,11 @@ function zipFiles(string FilePathListStr, string zipPathStr, [int verbose])
 	string strPath
 	for (i=0;i<numFiles;i+=1)
 		strPath = ParseFilePath(5, StringFromList(i, FilePathListStr), "\\", 0, 0)
-		strPath = replacestring("'", strPath, "''")
+		strPath = ReplaceString("'", strPath, "''")
 		cmd += SelectString(i>0, "", ", ") + "'" + strPath + "'"
 	endfor
 
-	strPath = replacestring("'", zipPathStr + zipFileStr, "''")
+	strPath = ReplaceString("'", zipPathStr + zipFileStr, "''")
 	cmd += " -DestinationPath '" + strPath + "'"
 	#else // Mac
 	zipPathStr = ParseFilePath(5, zipPathStr, "/", 0, 0)
@@ -5782,7 +5794,7 @@ function zipFiles(string FilePathListStr, string zipPathStr, [int verbose])
 	return (v_flag == 0)
 end
 
-// For developers only. Files to be installed should be packaged in one 
+// For developers only. Files to be installed should be packaged in one
 // folder together with the itx file created by this function.
 function CreateInstallScript()
 	
@@ -5825,8 +5837,8 @@ function CreateInstallScript()
 	script += "X KillVariables /Z V_install\r"
 	script += "X KillStrings /Z S_install\r"
 	
-	FileName = selectstring(i==1, "InstallPackage.itx", "Install" + ParseFilePath(3, FileName, ":", 0, 0) + ".itx")
-	open /D/F="Igor text wave files (*.itx):.itx;"/M="Save install script" refnum as ParseFilePath(1, StringFromList(0, FileList), ":", 1, 0) + FileName
+	FileName = SelectString(i==1, "InstallPackage.itx", "Install" + ParseFilePath(3, FileName, ":", 0, 0) + ".itx")
+	Open /D/F="Igor text wave files (*.itx):.itx;"/M="Save install script" refnum as ParseFilePath(1, StringFromList(0, FileList), ":", 1, 0) + FileName
 	if (strlen(S_fileName) == 0)
 		return 0
 	endif
