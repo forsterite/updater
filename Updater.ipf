@@ -3666,7 +3666,9 @@ function RepairUpdater([int silently])
 	// It seems that requesting the file from Github with URLRequest
 	// doesn't change the eol in the updater.ipf file; in S_serverResponse
 	// the /r become /n
-	return ItemsInList(UpdateFile(FunctionPath(""), ksGitHub, "8197", shortTitle="Updater", localVersion=thisVersion, newVersion=GitHubVersion))
+	int success = ItemsInList(UpdateFile(FunctionPath(""), ksGitHub, "8197", shortTitle="Updater", localVersion=thisVersion, newVersion=GitHubVersion))
+	Execute/P/Q/Z "COMPILEPROCEDURES " 
+	return success
 end
 
 
