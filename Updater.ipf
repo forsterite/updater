@@ -2,7 +2,7 @@
 #pragma rtGlobals=3
 #pragma IgorVersion=8
 #pragma IndependentModule=Updater
-#pragma version=4.48
+#pragma version=4.49
 #include <Resize Controls>
 
 // Updater headers
@@ -2634,7 +2634,7 @@ end
 function CheckScript(string filePath)
 	if (GrepString(filePath, "(?i)\.itx$"))
 		Grep /Z/Q/E="(?i)^X // standalone install script" filePath
-		if (V_value)
+		if (V_flag==0 && V_value)
 			return 1
 		endif
 	endif
@@ -4041,8 +4041,7 @@ function ReloadProjectsList()
 			endif
 			
 			// clean up project names that contain certain encoded characters
-			strName = ReplaceString("&#039;",strName, "'")
-			strName = ReplaceString("&amp;",strName, "&")
+			strName = RemoveHTMLEncoding(strName)
 
 // Don't try to get project details at this point: too many pages to download
 			
@@ -4381,16 +4380,9 @@ threadsafe function /S DownloadKeylistFromProjectPage(string projectID, variable
 	
 	list = ParseProjectPageAsList(projectID, S_serverResponse)
 	keylist = ReleaseList2KeyList(list)
-	
-//	keylist = ParseProjectPageAsKeylist(S_serverResponse)
-//	if (strlen(keylist) == 0)
-//		return ""
-//	endif
-//	keyList = ReplaceStringByKey("projectID", keyList, projectID)
 
 	return keylist
 end
-
 
 // turns a string list of items extracted from release web page into a keylist
 // avoids empty keypairs
