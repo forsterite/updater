@@ -49,8 +49,9 @@ static strconstant ksShortTitle="Updater" // the project short title on IgorExch
 // If you're developing a package and want to make sure that it's
 // compatible with IgorExchange installer:
 
-// Compress (zip) your project file(s) before uploading a project release.
-// This is recommended even for single-file projects.
+// It's a good idea to compress (zip) your project file(s) before 
+// uploading a project release. This is recommended even for single-file 
+// projects.
 
 // Make sure that the version number fields are filled out correctly,
 // and, if your project includes a procedure file, that the version
@@ -381,9 +382,7 @@ threadsafe function /WAVE DownloadProjectsList(variable timeout)
 			endif
 			
 			// clean up project names that contain certain encoded characters
-			strName = ReplaceString("&#039;", strName, "'")
-			strName = ReplaceString("&amp;", strName, "&")
-//			strName = ReplaceString(";", strName, ",")
+			strName = RemoveHTMLEncoding(strName)
 			
 			projectID = ParseFilePath(0, strProjectURL, "/", 1, 0)
 			
@@ -718,38 +717,36 @@ function PrefsButtonProc(STRUCT WMButtonAction &s)
 		return 0
 	endif
 	
-	if (cmpstr(s.ctrlName, "BtnRepair") == 0)
-		if (RepairUpdater())
-			KillWindow /Z $s.win
-		endif
-		return 0
-	endif
-	
-	if (cmpstr(s.ctrlName, "BtnClearCache") == 0)
-		return CacheClearAll()
-	endif
-	if (cmpstr(s.ctrlName, "BtnHistory") == 0)
-		string filePath = GetInstallerFilePath(ksHistoryFile)
-		if (WinType("HistoryNotebook") == 5)
-			DoWindow /F HistoryNotebook
-		elseif (s.eventMod & 4) // option/alt
-			OpenNotebook /K=1/Z/N=HistoryNotebook filePath
-		else
-			OpenNotebook /K=1/Z/R/N=HistoryNotebook filePath
-		endif
-		
-		return 0
-	endif
-	if (cmpstr(s.ctrlName, "ButtonSave") == 0)
-		// run PrefsSync, return value tells us whether updates need to be made
-		int redraw = PrefsSync()
-	endif
-	KillWindow /Z UpdaterPrefsPanel
-	if (redraw)
-		PrefsSaveWindowPosition(s.win)
-		MakeInstallerPanel()
-	endif
-	UpdateListboxWave(fGetStub())
+	int redraw = 0
+	strswitch (s.ctrlName)
+		case  "BtnRepair":
+			if (RepairUpdater())
+				KillWindow /Z $s.win
+			endif
+			return 0
+		case "BtnClearCache":
+			return CacheClearAll()
+		case "BtnHistory":
+			string filePath = GetInstallerFilePath(ksHistoryFile)
+			if (WinType("HistoryNotebook") == 5)
+				DoWindow /F HistoryNotebook
+			elseif (s.eventMod & 4) // option/alt
+				OpenNotebook /K=1/Z/N=HistoryNotebook filePath
+			else
+				OpenNotebook /K=1/Z/R/N=HistoryNotebook filePath
+			endif	
+			//return 0
+		case "ButtonSave":
+			// run PrefsSync, return value tells us whether updates need to be made
+			redraw = PrefsSync()
+		case "ButtonCancel": // cancel or save
+			KillWindow /Z UpdaterPrefsPanel
+			if (redraw)
+				PrefsSaveWindowPosition(s.win)
+				MakeInstallerPanel()
+			endif
+			UpdateListboxWave(fGetStub())
+	endswitch
 	return 0
 end
 
@@ -2623,6 +2620,12 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 	
 	sprintf cmd, "Install complete: %s %g", shortTitle, releaseVersion
 	WriteToHistory(cmd, prefs, 0)
+
+// we do this in higher level function
+//	#if IgorVersion() >= 9
+//	Execute/P "RELOAD CHANGED PROCS "
+//	Execute/P/Q/Z "COMPILEPROCEDURES "
+//	#endif
 	
 	return 1
 end
@@ -2873,8 +2876,8 @@ end
 
 // removes some potential html encodings
 threadsafe function /S RemoveHTMLEncoding(string s)
-	Make /free/T w_encoded = {"&gt;", "&lt;", "&amp;", "&quot;"}
-	Make /free/T w_unencoded = {">", "<", "&", "\""}
+	Make /free/T w_encoded = {"&gt;", "&lt;", "&amp;", "&quot;", "&apos;", "&#039;"}
+	Make /free/T w_unencoded = {">", "<", "&", "\"", "'", "'"}
 	int i, imax = numpnts(w_encoded)
 	for (i=0;i<imax;i+=1)
 		s = ReplaceString(w_encoded[i], s, w_unencoded[i])
@@ -3667,7 +3670,12 @@ function RepairUpdater([int silently])
 	// doesn't change the eol in the updater.ipf file; in S_serverResponse
 	// the /r become /n
 	int success = ItemsInList(UpdateFile(FunctionPath(""), ksGitHub, "8197", shortTitle="Updater", localVersion=thisVersion, newVersion=GitHubVersion))
-	Execute/P/Q/Z "COMPILEPROCEDURES " 
+	
+	#if IgorVersion() >= 9
+	Execute/P "RELOAD CHANGED PROCS "
+	Execute/P/Q/Z "COMPILEPROCEDURES "
+	#endif
+
 	return success
 end
 
@@ -5018,6 +5026,12 @@ function InstallSelection()
 			SetPanelStatus("Selected: " + matchlist[v_value][%name])
 		endif
 	endif
+	
+	#if IgorVersion() >= 9
+	Execute/P "RELOAD CHANGED PROCS "
+	Execute/P/Q/Z "COMPILEPROCEDURES "
+	#endif
+	
 	return 0
 end
 
