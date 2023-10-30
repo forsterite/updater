@@ -1,20 +1,15 @@
 #pragma TextEncoding="UTF-8"
 #pragma rtGlobals=3
+#pragma version=4.66
 #pragma IgorVersion=8
 #pragma IndependentModule=Updater
-#pragma version=4.63
 #include <Resize Controls>
 
 // Updater headers
 static constant kProjectID=8197 // the project node on IgorExchange
 static strconstant ksShortTitle="Updater" // the project short title on IgorExchange
 
-// 4.63 new reload button
-// 4.62 changed behaviour: for projects that are uploaded as a single, uncompressed file,
-//      if the filename changes keep the new filename
-//      Use system prefs instead of configurable date format
-// 4.61 stores time of last update in log.
-//      hover over local version in updates tab to see this info where it is avaiable.
+// 4.64 list filtering now works over multiple columns of listwave
 
 // *********************************************************************
 // Use this software at your own risk. Installing and updating projects
@@ -127,7 +122,7 @@ static strconstant ksShortTitle="Updater" // the project short title on IgorExch
 
 // feedback? ideas? send me a note: https: www.wavemetrics.com/user/tony
 
-constant kNumProjects = 250 // provides a rough idea of the minimum number of user-contributed projects that can be found at wavemetrics.com
+constant kNumProjects = 260 // provides a rough idea of the minimum number of user-contributed projects that can be found at wavemetrics.com
 constant kRemoveSuffix = 1 // if a single file is downloaded that has a name that looks like it has
  								// a suffix added to make the file unique, remove that suffix.
 strconstant ksIgnoreFilesList = ".DS_Store;Install Updater.itx;" // list of files that shouldn't be copied, wildcards okay
@@ -494,6 +489,12 @@ threadsafe function/WAVE DownloadProjectsList(variable timeout, string ProjectLi
 			selStart = strsearch(S_serverResponse, "<span>", selEnd, 3)
 			if (selStart>pEnd && selEnd<(pEnd+150))
 				strViews = S_serverResponse[selStart+6,selEnd-1]
+			else
+				selEnd = strsearch(S_serverResponse, " view</span>", pEnd, 2)
+				selStart = strsearch(S_serverResponse, "<span>", selEnd, 3)
+				if (selStart>pEnd && selEnd<(pEnd+150))
+					strViews = S_serverResponse[selStart+6,selEnd-1]
+				endif
 			endif
 
 			sprintf strLine, "%s;%s;%s;%s;%s;%s;%s;%s;", projectID, strDate, strName, strAuthor, strPublished, strViews, strType, strUserNum
@@ -600,7 +601,7 @@ function BackgroundCheck(STRUCT WMBackgroundStruct &s)
 				endif
 				
 				SavePackagePreferences ksPackageName, ksPrefsFileName, 0, prefs
-				makeInstallerPanel()	// use the data we stashed in the cache to create panel
+				MakeInstallerPanel()	// use the data we stashed in the cache to create panel
 				checkGit = 0 // don't check github version if user will try to update via panel
 			endif
 		endif
@@ -1767,7 +1768,7 @@ end
 function/S RemoveFromListWC(string listStr, string zapListStr)
 	string removeStr = ""
 	int i
-	for (i=0;i<ItemsInList(zapListStr);i+=1)
+	for (i=ItemsInList(zapListStr)-1;i>=0;i-=1)
 		removeStr += ListMatch(listStr, StringFromList(i, zapListStr))
 	endfor
 	return RemoveFromList(removeStr, listStr, ";", 0)
@@ -2364,6 +2365,120 @@ function/S MergeFolder(source, destination, [killSourceFolder, backupPathStr, te
 		DeleteFolder/Z RemoveEnding(source, ":")
 	endif
 	
+	return SortList(movedFileList)
+end
+
+// Merges folders like copyFolder on Windows
+// Files in destination folder are overwritten by more recently modified 
+// files from source
+// Setting test=1 doesn't move anything but generates a list of files
+// that would be overwritten
+// ignore is a string list of names of files that should not be moved.
+function/S MirrorFolder(source, destination, [backupPathStr, test, ignore])
+	string source, destination
+	int test
+	string backupPathStr // must be no more than one sublevel below an existing folder
+	string ignore // list of filenames that won't be moved
+	
+	test = ParamIsDefault(test) ? 0 : test
+	backupPathStr = SelectString(ParamIsDefault(backupPathStr), backupPathStr, "")
+	ignore = SelectString(ParamIsDefault(ignore), ignore, "")
+	int backup = (strlen(backupPathStr)>0)
+	
+	// clean up paths
+	source = ParseFilePath(2, source, ":", 0, 0)
+	destination = ParseFilePath(2, destination, ":", 0, 0)
+	if (backup)
+		backupPathStr = ParseFilePath(2, backupPathStr, ":", 0, 0)
+	endif
+	
+	// check that source and destination folders exist
+	GetFileFolderInfo/Q/Z source
+	variable sourceOK = V_isFolder
+	GetFileFolderInfo/Q/Z destination
+	if (sourceOK==0 || V_isFolder==0)
+		return ""
+	endif
+	
+	variable folderIndex, fileIndex, subfolderIndex, folderCount = 1, sublevels = 0
+	string folderList, fileList, fileName
+	string movedFileList = "", destFolderStr = "", subPathStr = ""
+	variable sourceMod
+	int filefound
+	
+	Make/free/T/N=0 w_folders, w_subfolders
+	w_folders = {source}
+	do
+		// step through folders at current sublevel
+		for (folderIndex=0;folderIndex<numpnts(w_folders);folderIndex+=1)
+			// figure out destination folder to match current source folder
+			subPathStr = (w_folders[folderIndex])[strlen(source),strlen(w_folders[folderIndex])-1]
+			destFolderStr = destination + subPathStr
+			
+			// make sure that folder exists at destination
+			if (test == 0)
+				NewPath/C/O/Q/Z tempPathIXI, destination + subPathStr
+				if (backup)
+					NewPath/C/O/Q/Z tempPathIXI, backupPathStr + subPathStr
+				endif
+			endif
+					
+			// get list of source files in indexth folder at current sublevel
+			NewPath/O/Q/Z tempPathIXI, w_folders[folderIndex]
+			fileList = IndexedFile(tempPathIXI, -1, "????")
+			// remove files from list if they match an entry in ignorefileList
+			fileList = RemoveFromListWC(fileList, ignore)
+			// move files
+			for (fileindex=0;fileIndex<ItemsInList(fileList);fileIndex+=1)
+				fileName = StringFromList(fileindex, fileList)
+				GetFileFolderInfo/Q/Z w_folders[folderIndex] + fileName
+				sourceMod = V_modificationDate
+				
+				GetFileFolderInfo/Q/Z destFolderStr + fileName
+				filefound = (v_flag == 0) && v_isFile
+				sourceMod = filefound ? V_modificationDate < (sourceMod-10) : 1
+			
+				if (test)
+					if (filefound && sourceMod) // file is to be overwritten
+						movedFileList = AddListItem(destFolderStr + fileName, movedfileList)
+					endif
+				else
+					if (backup) // back up any files that are to be overwritten	
+						if (filefound && sourceMod) // file is to be overwritten
+							CopyFile/Z/O destFolderStr + fileName as backupPathStr + subPathStr + fileName
+						endif
+					endif
+					if (sourceMod)
+						CopyFile/Z/O w_folders[folderIndex] + fileName as destFolderStr + fileName
+						movedFileList = AddListItem(destFolderStr + fileName, movedfileList)
+					endif
+				endif
+			endfor
+			
+			// make a list of subfolders in current folder
+			folderList = IndexedDir(tempPathIXI, -1, 0)
+			
+			// remove folders that we don't want to copy
+			folderList = RemoveFromListWC(folderList, ksIgnoreFoldersList)
+			
+			// add the list of folders to the subfolders wave
+			for (subfolderIndex=0;subfolderIndex<ItemsInList(folderList);subfolderIndex+=1)
+				w_subfolders[numpnts(w_subfolders)] = {w_folders[folderIndex] + StringFromList(subfolderIndex, folderList) + ":"}
+				folderCount += 1
+			endfor
+		endfor
+		// prepare for next sublevel iteration
+		Duplicate/T/O/free w_subfolders, w_folders
+		Redimension/N=0 w_subfolders
+		sublevels += 1
+	
+		if (numpnts(w_folders) == 0)
+			break
+		endif
+
+	while(1)
+	KillPath/Z tempPathIXI
+		
 	return SortList(movedFileList)
 end
 
@@ -3367,8 +3482,6 @@ function/S LogGetFileList(string projectID)
 	return fileList
 end
 
-
-
 // remove empty lines and optionally missing projects from log file
 // test = 1 returns number of missing projects
 // test = 0 returns number of projects in cleaned file
@@ -4103,7 +4216,8 @@ function MakeInstallerPanel()
 	TitleBox statusBox, win=InstallerPanel, pos={5,vTop}, frame=0, title=""
 		
 	DoUpdate/W=InstallerPanel
-	SetWindow InstallerPanel hook(hInstallerHook)=updater#fHook
+	SetWindow InstallerPanel hook(hInstallerHook)=updater#fHook	
+	SetWindow InstallerPanel userdata(version) = num2str(GetThisVersion())
 	
 	SetActiveSubwindow InstallerPanel
 
@@ -5051,8 +5165,13 @@ function InstallerPopupProc(STRUCT WMpopupAction &s)
 	if (s.eventCode != 2)
 		return 0
 	endif
+	
+	if (CheckPanelVersion(s.win, 0))
+		return 0
+	endif
+	
 	if (stringmatch(s.ctrlName, "popupFolder"))
-		reloadUpdatesList(1, 1)
+		ReloadUpdatesList(1, 1)
 	else
 		UpdateListboxWave(fGetStub())
 	endif
@@ -5060,6 +5179,7 @@ function InstallerPopupProc(STRUCT WMpopupAction &s)
 	// this updates text completion based on new popup selection
 	STRUCT WMWinHookStruct hookstruct
 	hookstruct.eventcode = 11
+	hookstruct.winName = "InstallerPanel#nb0"
 	fHook(hookstruct)
 	return 0
 end
@@ -5073,6 +5193,10 @@ function InstallerTabProc(STRUCT WMTabControlAction &s)
 	endif
 		
 	if (s.eventCode != 2)
+		return 0
+	endif
+	
+	if (CheckPanelVersion(s.win, 1))
 		return 0
 	endif
 	
@@ -5110,11 +5234,12 @@ function InstallerTabProc(STRUCT WMTabControlAction &s)
 		endif
 	endif
 	
-	UpdateListboxWave(fGetStub())
+//	UpdateListboxWave(fGetStub())
 	// send a keyboard event to filter hook
 	// this updates text completion based on new popup selection
 	STRUCT WMWinHookStruct hookstruct
 	hookstruct.eventcode = 11
+	hookstruct.winName = "InstallerPanel#nb0"
 	fHook(hookstruct)
 		
 	if (projectsTab)
@@ -5129,10 +5254,8 @@ function InstallerTabProc(STRUCT WMTabControlAction &s)
 		SetPanelStatus("Selected: " + matchlist[V_value][%name])
 		if (projectsTab || stringmatch(listWave[V_value][1], "*update available"))
 			Button btnInstallOrUpdate, win=InstallerPanel, disable=0
-//			Button btnRefresh, win=InstallerPanel, help={"Refresh"}
 		else
 			Button btnInstallOrUpdate, win=InstallerPanel, disable=2
-//			Button btnRefresh, win=InstallerPanel, help={"Refresh selection"}
 		endif
 		#ifdef testing
 		Button btnInstallOrUpdate, win=InstallerPanel, disable=0
@@ -5140,7 +5263,6 @@ function InstallerTabProc(STRUCT WMTabControlAction &s)
 		
 	else
 		Button btnInstallOrUpdate, win=InstallerPanel, disable=2
-//		Button btnRefresh, win=InstallerPanel, help={"Refresh"}
 	endif
 	return 0
 end
@@ -5149,6 +5271,11 @@ function InstallerButtonProc(STRUCT WMButtonAction &s)
 	if (s.eventCode != 2)
 		return 0
 	endif
+	
+	if (CheckPanelVersion(s.win, 1))
+		return 0
+	endif
+	
 	strswitch(s.ctrlName)
 		case "btnInstallOrUpdate" :
 			ControlInfo/W=InstallerPanel tabs
@@ -5160,8 +5287,9 @@ function InstallerButtonProc(STRUCT WMButtonAction &s)
 			break
 		case "ButtonClear" :
 			fClearText(1)
-			NVAR stubLen = root:Packages:Installer:stubLen
-			stubLen = 0
+			
+			SetWindow InstallerPanel#nb0 userdata(stublen) = "0"
+			
 			Button ButtonClear, win=InstallerPanel, disable=3
 			UpdateListboxWave("")
 			break
@@ -5209,6 +5337,12 @@ function InstallerListBoxProc(STRUCT WMListboxAction &s)
 	if (s.eventCode == -1)
 		return 0
 	endif
+		
+	// check for out-of-date panel on mousedown
+	if (s.eventCode==1 && CheckPanelVersion(s.win, 2))
+		Execute/Z/P "Updater#MakeInstallerPanel()"
+		return 0
+	endif
 	
 	DFREF dfr = root:Packages:Installer
 	int tabNum = (cmpstr(s.ctrlName, "ListBoxUpdate")==0)
@@ -5244,9 +5378,7 @@ function InstallerListBoxProc(STRUCT WMListboxAction &s)
 					Button btnInstallOrUpdate, win=InstallerPanel, disable=0
 				else
 					Button btnInstallOrUpdate, win=InstallerPanel, disable=2-2*(stringmatch(s.listWave[v_value][1], "*update available"))
-//					Button btnRefresh, win=InstallerPanel, help={"Refresh selection"}
-				endif
-				
+				endif		
 				
 				#ifdef testing
 				Button btnInstallOrUpdate, win=InstallerPanel, disable=0
@@ -5257,7 +5389,6 @@ function InstallerListBoxProc(STRUCT WMListboxAction &s)
 			sprintf status "Showing %d of %d projects", DimSize(s.listWave, 0), DimSize(FullList, 0)
 			SetPanelStatus(status)
 			Button btnInstallOrUpdate, win=InstallerPanel, disable=2
-//			Button btnRefresh, win=InstallerPanel, help={"Refresh All"}
 			break
 			
 		case 4: // Cell selection (mouse or arrow keys)
@@ -5268,7 +5399,6 @@ function InstallerListBoxProc(STRUCT WMListboxAction &s)
 					Button btnInstallOrUpdate, win=InstallerPanel, disable=0
 				else
 					Button btnInstallOrUpdate, win=InstallerPanel, disable=2-2*(cmpstr(s.listWave[s.row][1], "update available")==0)
-//					Button btnRefresh, win=InstallerPanel, help={"Refresh selection"}
 				endif
 						
 				#ifdef testing
@@ -5279,7 +5409,6 @@ function InstallerListBoxProc(STRUCT WMListboxAction &s)
 			endif
 			sprintf status "Showing %d of %d projects", DimSize(s.listWave, 0), DimSize(FullList, 0)
 			SetPanelStatus(status)
-//			Button btnRefresh, win=InstallerPanel, help={"Refresh"}
 			break
 			
 		case 3: // double-click
@@ -5433,9 +5562,11 @@ end
 // refresh listbox wave based on string str
 function UpdateListboxWave(string str)
 	ControlInfo/W=InstallerPanel tabs
-	int SelectedTab = v_value, nameCol = 1, typeCol = 5
-	int col
+	int SelectedTab = v_value, typeCol = 5
+	int col, nameCol
 	string listBoxName = "", regEx = ""
+	
+	nameCol = SelectedTab == 0 ? -1 : 1
 	
 	DFREF dfr = root:Packages:Installer
 	
@@ -5477,6 +5608,7 @@ function UpdateListboxWave(string str)
 	endif
 	
 	str = ReplaceString("+", str, "\+")
+	
 	regEx = "(?i)" + str
 	Grep/GCOL=(nameCol)/Z/E=regEx subList as matchList
 	
@@ -5515,7 +5647,7 @@ function UpdateListboxWave(string str)
 			break
 	endswitch
 	
-	if (DimSize(DisplayList,0))
+	if (DimSize(DisplayList, 0))
 		for (col=0;col<DimSize(DisplayList, 1);col+=1)
 			strswitch( (titles[0][col])[0,2] )
 				case "\JC":
@@ -5532,7 +5664,7 @@ function UpdateListboxWave(string str)
 	if (strlen(strSelection)>0)
 		FindValue/TEXT=strSelection/TXOP=4/RMD=[][0,0] DisplayList
 		ListBox $listboxName, win=InstallerPanel, selRow=v_value, row=-1
-		if (v_value<0)
+		if (v_value < 0)
 			sprintf s "Showing %d of %d projects", DimSize(DisplayList, 0), DimSize(FullList, 0)
 			SetPanelStatus(s)
 			Button btnInstallOrUpdate, win=InstallerPanel, disable=2
@@ -5560,7 +5692,7 @@ function/S GetUpdateURLfromFile(string filePath)
 	return url // "" on failure
 end
 
-// selects project in the listbox for theh selected tab
+// selects project in the listbox for the selected tab
 // doesn't update buttons
 function SelectProject(string projectID)
 	ControlInfo/W=InstallerPanel tabs
@@ -5618,17 +5750,20 @@ function InstallSelection()
 end
 
 // ----------------------- filter code ----------------------------
+// adapted to find text matches in multiple columns
 
 // intercept and deal with keyboard events in notebook subwindow
 function fHook(STRUCT WMWinHookStruct &s)
 
 	if (s.eventcode == 2) // window is being killed
-		return 1
+		return 0
 	endif
 	
-	GetWindow/Z InstallerPanel activeSW
-	if (cmpstr(s_value, "InstallerPanel#nb0"))
-		return 0
+	if (cmpstr(s.winName, "InstallerPanel#nb0"))
+		GetWindow/Z InstallerPanel activeSW
+		if (cmpstr(s_value, "InstallerPanel#nb0"))
+			return 0
+		endif
 	endif
 	
 	if (s.eventCode == 22)
@@ -5636,7 +5771,9 @@ function fHook(STRUCT WMWinHookStruct &s)
 	endif
 	
 	DFREF dfr = root:Packages:Installer
-	NVAR stubLen = dfr:stubLen
+	
+	variable stubLen = str2num(GetUserData("InstallerPanel#nb0", "", "stublen"))
+	stubLen = numtype(stubLen) ? 0 : stubLen
 	
 	if (s.eventcode==3 && stubLen==0) // mousedown
 		return 1
@@ -5751,19 +5888,22 @@ function fHook(STRUCT WMWinHookStruct &s)
 	
 	// do auto-completion based on stubLen characters
 	ControlInfo/W=InstallerPanel tabs
+	int maxcol
 	if (v_value == 0)
 		wave/T matchList = dfr:ProjectsMatchList
+		maxcol = 2 // look for a match in columns 1 and 2 of matchList
 	else
 		wave/T matchList = dfr:UpdatesMatchList
+		maxcol = 1 // look for a match in column 1 of matchList
 	endif
 	
 	if (s.keycode==30 || s.keycode==31) // up or down arrow
 		Notebook InstallerPanel#nb0 selection={(0,stubLen),endOfFile}
 		GetSelection Notebook, InstallerPanel#nb0, 3
 		strEnding = s_selection
-		strInsert = fArrowKey(strStub, strEnding, 1-2*(s.keycode == 30), matchList)
+		strInsert = fArrowKey(strStub, strEnding, 1-2*(s.keycode == 30), matchList, maxcol)
 	else
-		strInsert = fCompleteStr(strStub, matchList)
+		strInsert = fCompleteStr(strStub, matchList, maxcol)
 	endif
 	// insert completion text in grey
 	Notebook InstallerPanel#nb0 selection={(0,stubLen),endOfFile}, textRGB=(50000,50000,50000), text=strInsert
@@ -5772,6 +5912,9 @@ function fHook(STRUCT WMWinHookStruct &s)
 	
 	Button ButtonClear, win=InstallerPanel, disable=3*(stublen == 0)
 	fClearText((stubLen == 0))
+	
+	SetWindow InstallerPanel#nb0 userdata(stublen) = num2str(stubLen)
+	
 	return 1 // tell Igor we've handled all keyboard events
 end
 
@@ -5799,39 +5942,52 @@ function/T fGetStub()
 end
 
 // returns completion text for first match of string s in text wave w
-function/T fCompleteStr(string stub, wave/T w)
-	int col = 1, stubLen = strlen(stub)
+function/T fCompleteStr(string stub, wave/T w, int maxcol)
+	int stubLen = strlen(stub)
 	if (stubLen == 0)
 		return ""
 	endif
-	Make/free/T/N=1 w_out
-	Grep/GCOL=(col)/Z/E="(?i)^"+stub w as w_out
-	if (DimSize(w_out,0) == 0)
-		return ""
+	Make/free/T/N=0 w_out
+	string list = ""
+	int i
+	for (i=1;i<=maxcol;i++)
+		Grep/A/GCOL=(i)/DCOL={0}/Z/E="(?i)^"+stub w as w_out
+	endfor
+	sort w_out, w_out
+	RemoveDuplicates(w_out)
+	if (numpnts(w_out))
+		return (w_out[0])[stubLen,Inf]
 	endif
-	return (w_out[0][col])[stubLen,Inf]
+	return ""
 end
 
 // find next or previous matching entry in wList and return completion text
-function/T fArrowKey(string stub, string ending, int increment, wave/T wList)
-	int col = 1, stubLen = strlen(stub)
+// look in columns 1... maxcol
+function/T fArrowKey(string stub, string ending, int increment, wave/T wList, int maxcol)
+	
+	int stubLen = strlen(stub)
 	if (stubLen == 0)
 		return ""
 	endif
-	Make/free/T/N=1 w_out
-	Grep/Z/GCOL=(col)/E="(?i)^"+stub/DCOL={0} wList as w_out
-	if (DimSize(w_out,0) == 0)
+	make/free/T/N=0 w_out
+	int i
+	for(i=1;i<=maxcol;i++)
+		Grep/A/Z/GCOL=(i)/DCOL={0}/E="(?i)^"+stub wList as w_out
+	endfor
+	RemoveDuplicates(w_out)
+	sort w_out, w_out
+	if (DimSize(w_out, 0) == 0)
 		return ""
 	endif
-	FindValue/RMD=[][0,0]/TEXT=stub+ending/TXOP=4/Z w_out
+	FindValue/TEXT=stub+ending/TXOP=4/Z w_out
 	if (v_value>-1)
 		v_value += increment
 		v_value = V_value<0 ? DimSize(w_out,0)-1 : v_value
 		v_value = V_value>=DimSize(w_out,0) ? 0 : v_value
 	else
-		return (w_out[0][0])[stubLen,Inf]
+		return ""
 	endif
-	return (w_out[v_value][0])[stubLen,Inf]
+	return (w_out[v_value])[stubLen,Inf]
 end
 
 // this proc pic has a transparent background.
@@ -6331,6 +6487,11 @@ function PrepareProjectRelease()
 	if (strlen(shortTitle) == 0)
 		shortTitle = ParseFilePath(3, filePath, ":", 0, 0)
 	endif
+	
+	if (moreFiles!=2 && cmpstr(projectID,"8197")==0)
+		doAlert 0, "You forgot the install script. Doh!"
+		return 0
+	endif
 		
 	if (moreFiles == 2)
 		int refnum
@@ -6441,17 +6602,16 @@ function PrepareProjectRelease()
 		endfor
 	endfor
 
-	
 	string archive = ""
 	// edit fileName format here
 	sprintf archive, "%s%d%02d.zip" shortTitle, floor(version), 100*(version-floor(version))
 		
-	zipFiles(filePath, SpecialDirPath("Desktop", 0, 0, 0) + archive, verbose=0)
-	
-	// The suggestions for release identifier and version string fields
-	// are based on the format that was enforced on the old IgorExchange
-	// web site. Edit as you please.
-
+	zipFiles(filePath, SpecialDirPath("Desktop", 0, 0, 0) + archive, verbose=0)	
+	Print "Files added to archive:"
+	for (i=ItemsInList(filePath)-1;i>=0;i--)
+		Print ParseFilePath(0, StringFromList(i, filePath), ":", 1, 0)
+	endfor
+	Print ""
 	
 	// print a warning if we find any development flag symbols defined in the package file[s]
 	for (i=ItemsInList(filepath)-1;i>=0;i--)
@@ -6481,7 +6641,11 @@ function PrepareProjectRelease()
 			return 0
 		endif
 	endif
-	
+
+	// The suggestions for release identifier and version string fields
+	// are based on the format that was enforced on the old IgorExchange
+	// web site. Edit as you please.
+		
 	printf "Version (String) Suggestion: IGOR.%0.2f.x-%0.2f\r", IgorVer, version
 	Print "\"Version - Date\" fields should be cleared"
 	printf "Version - Major: %g\r", floor(version)
@@ -6718,6 +6882,22 @@ function AnimateButton(STRUCT WMBackgroundStruct &s)
 		Button/Z btnRefresh, win=InstallerPanel, Picture=Updater#refreshRotate, userdata(rotated)="1"
 	else
 		Button/Z btnRefresh, win=InstallerPanel, Picture=Updater#refresh, userdata(rotated)="0"
+	endif
+	return 0
+end
+
+// returns truth that this procedure file has been updated since initialisation
+static function CheckPanelVersion(string win, int restart)
+	if (cmpstr(GetUserData(win, "", "version"), num2str(GetThisVersion())))
+		if (restart)
+			DoAlert 0, "You have updated the package since this panel was created.\r\rThe package will restart to update the control panel."
+			if (restart == 1)
+				MakeInstallerPanel()
+			endif
+		else
+			DoAlert 0, "You have updated the package since this panel was created.\r\rPlease close and reopen the panel to continue."
+		endif
+		return 1
 	endif
 	return 0
 end
