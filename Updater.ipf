@@ -1,6 +1,6 @@
 #pragma TextEncoding="UTF-8"
 #pragma rtGlobals=3
-#pragma version=4.66
+#pragma version=4.68
 #pragma IgorVersion=8
 #pragma IndependentModule=Updater
 #include <Resize Controls>
@@ -8,8 +8,6 @@
 // Updater headers
 static constant kProjectID=8197 // the project node on IgorExchange
 static strconstant ksShortTitle="Updater" // the project short title on IgorExchange
-
-// 4.64 list filtering now works over multiple columns of listwave
 
 // *********************************************************************
 // Use this software at your own risk. Installing and updating projects
@@ -661,8 +659,8 @@ end
 // *** package preferences ***
 
 // define some constants for saving preferences for this package
-strconstant ksPackageName = Updater
-strconstant ksPrefsFileName = UpdaterPrefs.bin
+strconstant ksPackageName = "Updater"
+strconstant ksPrefsFileName = "UpdaterPrefs.bin"
 constant kPrefsVersion = 100
 
 structure PackagePrefs
@@ -847,6 +845,7 @@ function PrefsButtonProc(STRUCT WMButtonAction &s)
 		case "BtnClearCache":
 			return CacheClearAll()
 		case "BtnHistoryPanel":
+
 			filePath = GetInstallerFilePath(ksHistoryFile)
 			if (WinType("HistoryPanel") == 7)
 				DoWindow/F HistoryPanel
@@ -862,7 +861,7 @@ function PrefsButtonProc(STRUCT WMButtonAction &s)
 				DefineGuide/W=HistoryPanel Fright = {FR, -grout}
 				NewNotebook/F=1/N=nbHistory/HOST=HistoryPanel/FG=(Fleft,Ftop,Fright,Fbottom)/OPTS=8
 				SetWindow HistoryPanel#nbHistory, activeChildFrame=0
-				Grep/Q/E=""/LIST="\r•" filePath
+				Grep/Q/E=""/LIST="\r•" filePath // no need for Igor 8 workaround because s_value is created by GetWindow
 				Notebook HistoryPanel#nbHistory selection={startOfFile,endofFile}, margins={0,0,2000}, text=RemoveEnding(s_value, "•")
 				Notebook HistoryPanel#nbHistory selection={startOfFile,startOfFile}, findText={"",1}
 				Button btnHistoryClear win=HistoryPanel, pos={5,5}, title="Clear All", size={60,20}, Proc=PrefsButtonProc
@@ -1203,6 +1202,7 @@ function/S UpdateFile(installPath, url, projectID, [shortTitle, localVersion, ne
 		// move the old file, if it exists
 		string deletePath = CreateUniqueDir(SpecialDirPath("Temporary",0,0,0), shortTitle)
 		MoveFile/O/I=0/Z filePath as deletePath + fileName
+		// set the name for the new file
 		fileName = downloadFileName
 		filePath = installPath + fileName
 	endif
@@ -1448,7 +1448,7 @@ function MoveFiles(string fileList, string fromPath, string toPath)
 		destinationPath = toPath
 		for (j=0;j<ItemsInList(subPath, ":");j+=1)
 			destinationPath += StringFromList(j, subPath, ":") + ":"
-			NewPath/C/O/Q/Z tempPathIXI, destinationPath
+			NewPath/C/O/Q/Z tempPathIXI, destinationPath // Igor eXchange Installer
 		endfor
 		MoveFile/O/Z filePath as destinationPath + fileName
 		if (v_flag == 0)
@@ -1552,6 +1552,7 @@ end
 threadsafe function GetProcVersion(string filePath)
 	variable procVersion
 	variable noVersion = 0
+	string S_Value = "" // workaround for Grep bug for Igor 8
 	Grep/Q/E="(?i)^#pragma[\s]*version[\s]*="/LIST/Z filePath
 	if (v_flag != 0)
 		return noVersion
@@ -1588,6 +1589,7 @@ function GetThisVersion()
 	endfor
 	Close refnum
 	wave/T ProcText = ListToTextWave(strHeader, "\r")
+	string S_Value = "" // workaround for Grep bug for Igor 8
 	Grep/Q/E="(?i)^#pragma[\s]*version[\s]*="/LIST/Z ProcText
 	if (v_flag != 0)
 		return 0
@@ -1615,6 +1617,7 @@ function/S GetPragmaString(string strPragma, string filePath)
 		return ""
 	endif
 	string s_exp = "(?i)^#pragma[\s]*" + strPragma + "[\s]*="
+	string S_Value = "" // workaround for Grep bug for Igor 8
 	Grep/Q/E=s_exp/LIST/Z filePath
 	if (v_flag != 0)
 		return ""
@@ -1638,6 +1641,7 @@ function GetPragmaVariable(string strPragma, string filePath)
 	endif
 	strpragma = LowerStr(strpragma)
 	string s_exp = "(?i)^#pragma[\s]*" + strPragma + "[\s]*="
+	string S_Value = "" // workaround for Grep bug for Igor 8
 	Grep/Q/E=s_exp/LIST/Z filePath
 	if (v_flag != 0)
 		return NaN
@@ -1656,6 +1660,7 @@ function/S GetShortTitle(string filePath)
 		shortTitle = GetStringConstFromFile("ksShortName", filePath) // for backward compatibility
 	endif
 	if (strlen(shortTitle) == 0)
+		string S_Value = "" // workaround for Grep bug for Igor 8
 		Grep/Q/E="(?i)#pragma[\s]*moduleName[\s]*="/LIST/Z filePath
 	
 		if (v_flag != 0)
@@ -1681,6 +1686,7 @@ end
 function/S GetStringConstFromFile(string constantNameStr, string filePath)
 	string s_exp = "", s_out = ""
 	sprintf s_exp, "(?i)^[\s]*static[\s]*strconstant[\s]*%s[\s]*=", constantNameStr
+	string S_Value = "" // workaround for Grep bug for Igor 8
 	Grep/Z/Q/E=s_exp/LIST/Z filePath
 	if (v_flag != 0)
 		return ""
@@ -1701,6 +1707,7 @@ function GetConstantFromFile(string strName, string filePath)
 	endif
 	string s_exp = "", s_out = ""
 	sprintf s_exp, "(?i)^[\s]*static[\s]*constant[\s]*%s[\s]*=", strName
+	string S_Value = "" // workaround for Grep bug for Igor 8
 	Grep/Q/E=s_exp/LIST/Z filePath
 	if (v_flag != 0)
 		return NaN
@@ -3543,6 +3550,7 @@ function/S ListOfProjectsFromInstallLog()
 	string projectList = "", strLine = ""
 	int i, numLines
 	// use grep to read all project lines into a string
+	string S_Value = "" // workaround for Grep bug for Igor 8
 	Grep/Q/O/Z/E="^[0-9]+;"/LIST="\r" filePath
 	
 	if (v_flag != 0)
@@ -3730,6 +3738,7 @@ function/S CacheGetProjectsList() // about 16 ms
 	string projectList = "", strLine = ""
 	int i, numLines
 	// use grep to read all project lines into a string
+	string S_Value = "" // workaround for Grep bug for Igor 8
 	Grep/Q/O/Z/ENCG=1/LIST="\r"/E=";" filePath
 	
 	if (V_flag != 0)
@@ -3758,6 +3767,7 @@ function/S CacheGetProject(string projectID) // about 11 ms
 	string filePath = GetInstallerFilePath(ksCacheFile)
 	string s_exp
 	sprintf s_exp, "^%s;", projectID
+	string S_Value = "" // workaround for Grep bug for Igor 8
 	Grep/Z/Q/LIST="\r"/ENCG=1/E=s_exp filePath
 	if (strlen(s_value))
 		return StringFromList(0, s_value, "\r")
@@ -3842,6 +3852,7 @@ function CachePutWave(wave/T ProjectsWave, int updates)
 		
 		// pull the project from the cache
 		sprintf s_exp, "^%s;", projectID
+		string S_Value = "" // workaround for Grep bug for Igor 8
 		Grep/Z/Q/LIST=""/INDX/E=s_exp CacheWave
 		if (strlen(s_value)) // put the cached project in list string
 			wave w_index
@@ -4020,6 +4031,7 @@ function RepairUpdater([int silently])
 	endif
 	
 	variable GitHubVersion
+	string S_Value = "" // workaround for Grep bug for Igor 8
 	Grep/Q/E="(?i)^#pragma[\s]*version[\s]*="/LIST/Z wProc
 	
 	if (v_flag != 0)
@@ -4078,6 +4090,7 @@ threadsafe function GetGitHubVersion(int timeout)
 	endif
 	
 	variable GitHubVersion
+	string S_Value = "" // workaround for Grep bug for Igor 8
 	Grep/Q/E="(?i)^#pragma[\s]*version[\s]*="/LIST/Z wProc
 	
 	if (v_flag != 0)
@@ -4764,14 +4777,12 @@ function/wave ProjectWave(string projectID)
 	return w
 end
 
-// if pid is set the project must be in log
 // forced : bit 0 = reload local, bit 1 = reload remote
 function ReloadUpdatesList(int forced, int gui, [string pid])
 	// gui = 1 for installer panel
 	
 	// get project name, update status, local and remote versions, release
-	// URL, OS compatibility and release date for each file with
-	// compatible update header
+	// URL, OS compatibility and release date for each project
 	DFREF dfr = root:Packages:Installer
 	wave/T UpdatesFullList = dfr:UpdatesFullList
 	ResetColumnLabels()
@@ -4802,11 +4813,22 @@ function ReloadUpdatesList(int forced, int gui, [string pid])
 			UpdatesFullList[][%local] = GetPragmaString("version", UpdatesFullList[p][%installPath])
 			// maybe a file has been updated
 			UpdatesFullList[][%status] = SelectString(str2num(UpdatesFullList[p][%local])>=str2num(UpdatesFullList[p][%remote]), UpdatesFullList[p][%status], "up to date")
+			UpdatesFullList[][%lastUpdate] = num2istr(GetFileCreationDate(UpdatesFullList[p][%installPath]))
 			resortWaves(1, 0)
 		endif
 		
 		return 0
 	endif
+	
+	int i, j
+	string procList = "", cmd = "", strExitStatus = ""
+	string keyList, projectID, strRemVer, strLocVer
+	string filePath = ""
+	string lastUpdate = ""
+	string shortTitle, url, releaseURL, projectName, strDate, fileStatus
+	string strSystem = "", filesInfo = "", installDate = "", logEntry = ""
+	variable CacheDate, localVersion, releaseVersion, releaseMajor, releaseMinor, releaseIgorVersion
+	variable currentIgorVersion = GetIgorVersion()
 	
 	// clear any incomplete or old list
 	if (ParamIsDefault(pid))
@@ -4814,40 +4836,58 @@ function ReloadUpdatesList(int forced, int gui, [string pid])
 	else
 		FindValue/Z/TEXT=pid/TXOP=2/RMD=[][0,0] UpdatesFullList
 		if (v_value >- 1)
+			filePath = UpdatesFullList[v_value][%installPath]
 			DeletePoints/M=0 v_value, 1, UpdatesFullList
 			ResetColumnLabels()
 		endif
 	endif
 	
-	int i, j
-	string procList = "", cmd = "", strExitStatus = ""
-	string keyList, projectID, strRemVer, strLocVer, filePath
-	string lastUpdate = ""
-	string shortTitle, url, releaseURL, projectName, strDate, fileStatus
-	string strSystem = "", filesInfo = "", installDate = "", logEntry = ""
-	variable CacheDate, localVersion, releaseVersion, releaseMajor, releaseMinor, releaseIgorVersion
-	variable currentIgorVersion = GetIgorVersion()
-	
-	if (ParamIsDefault(pid) == 0)
-		Make/free/T w = {pid}
-		checkInstalled = 1
-	elseif (checkInstalled)
-		wave/T w = ListToTextWave(ListOfProjectsFromInstallLog(),";")
-	else
-		if (checkFilesInUserProcsFolder)
-			wave/T w = GetProcsRecursive(1)
-		elseif (checkFilesInExperiment) // check only open files
-			wave/T w = ListToTextWave(WinList("*",";","INDEPENDENTMODULE:1,INCLUDE:3"),";")
-			w = GetProcWinFilePath(w)
-			TextWaveZapString(w, "")
+	if (ParamIsDefault(pid))
+		if (checkInstalled)
+			wave/T w = ListToTextWave(ListOfProjectsFromInstallLog(),";")
+		else
+			if (checkFilesInUserProcsFolder)
+				wave/T w = GetProcsRecursive(1)
+			elseif (checkFilesInExperiment) // check only open files
+				wave/T w = ListToTextWave(WinList("*",";","INDEPENDENTMODULE:1,INCLUDE:3"),";")
+				w = GetProcWinFilePath(w)
+				TextWaveZapString(w, "")
+			endif
+			// remove this procedure from the list
+			TextWaveZapString(w, FunctionPath(""))
+			
+			// add this file to start of list
+			InsertPoints 0, 1, w
+			w[0] = FunctionPath("")
 		endif
-		// remove this procedure from the list
-		TextWaveZapString(w, FunctionPath(""))
-		
-		// add this file to start of list
-		InsertPoints 0, 1, w
-		w[0] = FunctionPath("")
+	else // check one project
+		if (checkInstalled)
+			Make/free/T w = {pid}
+		else
+			Make/T/free w = {filePath}
+		endif
 	endif
+	
+//	if (ParamIsDefault(pid) == 0)
+//		Make/free/T w = {pid}
+//		checkInstalled = 1
+//	elseif (checkInstalled)
+//		wave/T w = ListToTextWave(ListOfProjectsFromInstallLog(),";")
+//	else
+//		if (checkFilesInUserProcsFolder)
+//			wave/T w = GetProcsRecursive(1)
+//		elseif (checkFilesInExperiment) // check only open files
+//			wave/T w = ListToTextWave(WinList("*",";","INDEPENDENTMODULE:1,INCLUDE:3"),";")
+//			w = GetProcWinFilePath(w)
+//			TextWaveZapString(w, "")
+//		endif
+//		// remove this procedure from the list
+//		TextWaveZapString(w, FunctionPath(""))
+//		
+//		// add this file to start of list
+//		InsertPoints 0, 1, w
+//		w[0] = FunctionPath("")
+//	endif
 	
 	int numProjects = DimSize(w,0)
 	for (i=0;i<numProjects;i+=1)
@@ -4883,6 +4923,8 @@ function ReloadUpdatesList(int forced, int gui, [string pid])
 				continue
 			endif
 			
+			lastUpdate = num2istr(V_modificationDate)
+			
 			// skip any file that doesn't have kProjectID set
 			// we don't try to guess URL because download failures will slow the indexing too much
 			url = GetUpdateURLfromFile(filePath)
@@ -4907,6 +4949,7 @@ function ReloadUpdatesList(int forced, int gui, [string pid])
 			if (stringmatch(filePath, SpecialDirPath("Igor Pro User Files", 0, 0, 0) + "*"))
 				filesInfo = filePath[strlen(SpecialDirPath("Igor Pro User Files", 0, 0, 0)),Inf]
 			endif
+				
 		endif
 		
 		// now check release version
@@ -4937,7 +4980,7 @@ function ReloadUpdatesList(int forced, int gui, [string pid])
 		releaseVersion = NumberByKey("remote", keyList)
 
 		if (checkInstalled)	// checking projects in install log
-			if (releaseVersion>localVersion)
+			if (releaseVersion > localVersion)
 				if (releaseIgorVersion<=currentIgorVersion && stringmatch(fileStatus, "complete"))
 					fileStatus += ", update available" // don't allow updates for incomplete or missing projects
 				elseif (stringmatch(fileStatus, "complete"))
@@ -4986,6 +5029,11 @@ function ReloadUpdatesList(int forced, int gui, [string pid])
 		SetPanelStatus(strExitStatus)
 	endif
 	return 1
+end
+
+function GetFileCreationDate(string strFilePath)
+	GetFileFolderInfo/Q/Z strFilePath
+	return V_creationDate
 end
 
 // returns string list, no shortTitle available from project page
@@ -5630,8 +5678,12 @@ function UpdateListboxWave(string str)
 				HelpList = ""
 				HelpList[][0] = matchList[p][%filesInfo]
 				HelpList[][1] = SelectString(strlen(matchList[p][%releaseInfo])>0, matchList[p][%filesInfo], ReplaceString("</p>", matchList[p][%releaseInfo], "\r"))
+
 				HelpList[][2] = SelectString(strlen(matchList[p][%installDate]), "", "Installed on " + Secs2Date(str2num(matchList[p][%installDate]), 0))
 				HelpList[][2] += SelectString(strlen(matchList[p][%lastUpdate]), "", "\rLast Updated on " + Secs2Date(str2num(matchList[p][%lastUpdate]), 0))
+				// if we're checking files rather than install log, check last mod date
+				HelpList[][2] = SelectString(strlen(matchList[p][%installDate])==0 && strlen(matchList[p][%lastUpdate]), HelpList, "Last modified " + Secs2Date(str2num(matchList[p][%lastUpdate]), 0))
+
 				//HelpList[][3] = "Released on " + JulianToDate(str2num(matchList[p][%releaseDate]), prefs.dateFormat)
 				HelpList[][3] = "Released on " + Secs2Date(date2secs(1995, 10, 9) + (str2num(matchList[p][%releaseDate]) - 2450000) * 86400, 0)
 				HelpList[][3] += "\rFile type: " + ParseFilePath(4, matchList[p][%releaseURL], "/", 0, 0)
