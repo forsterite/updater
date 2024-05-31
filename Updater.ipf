@@ -1,6 +1,6 @@
 #pragma TextEncoding="UTF-8"
 #pragma rtGlobals=3
-#pragma version=4.68
+#pragma version=4.70
 #pragma IgorVersion=8
 #pragma IndependentModule=Updater
 #include <Resize Controls>
@@ -120,7 +120,7 @@ static strconstant ksShortTitle="Updater" // the project short title on IgorExch
 
 // feedback? ideas? send me a note: https: www.wavemetrics.com/user/tony
 
-constant kNumProjects = 260 // provides a rough idea of the minimum number of user-contributed projects that can be found at wavemetrics.com
+constant kNumProjects = 270 // provides a rough idea of the minimum number of user-contributed projects that can be found at wavemetrics.com
 constant kRemoveSuffix = 1 // if a single file is downloaded that has a name that looks like it has
  								// a suffix added to make the file unique, remove that suffix.
 strconstant ksIgnoreFilesList = ".DS_Store;Install Updater.itx;" // list of files that shouldn't be copied, wildcards okay
@@ -176,7 +176,7 @@ function StartDownloadThreadForHook(STRUCT WMBackgroundStruct &s)
 	LoadPrefs(prefs)
 	if ( (datetime-prefs.lastCheck) < prefs.frequency)
 		#ifdef debug
-		Print "StartDownloadThreadForHook() completed without starting premptive thread"
+		Print "StartDownloadThreadForHook() completed without starting preemptive thread"
 		#endif
 		return 1 // Getting here should be fast!
 	endif
@@ -190,7 +190,7 @@ function StartDownloadThreadForHook(STRUCT WMBackgroundStruct &s)
 	return 1
 end
 
-// start premptive download and cooperative bg task
+// start preemptive download and cooperative bg task
 // options:
 //  bit 0: projects list - get info from index pages
 //  bit 1: installed projects - get info from release pages
@@ -508,17 +508,22 @@ end
 
 // cooperative BG task to deal with downloads when they're done
 function BackgroundCheck(STRUCT WMBackgroundStruct &s)
-		
+	
+	int debugging = 0
 	#ifdef debug
-	printf "%s BackgroundCheck: ", time()
+	debugging = 1
 	#endif
+	
+	if (debugging)
+		printf "%s BackgroundCheck: ", time()
+	endif
 
 	NVAR threadGroupID = root:InstallerBG:threadGroupID
 	DFREF dfr = ThreadGroupGetDFR(threadGroupID, 0) // Get free data folder from output queue
 	if ( DataFolderRefStatus(dfr) == 0 )
-		#ifdef debug
-		Print "preemptive task still running"
-		#endif
+		if (debugging)
+			Print "preemptive task still running"
+		endif
 		return 0 // task repeats in main thread until folder is ready
 	endif
 	
@@ -542,7 +547,7 @@ function BackgroundCheck(STRUCT WMBackgroundStruct &s)
 		
 //	ReleaseCacheDate;shortTitle;remote;system;releaseDate;releaseURL;releaseIgorVersion;releaseInfo;
 	
-	if (!gui)
+	if ((!gui) || debugging)
 		
 		for (i=0;i<numProjects;i+=1)
 			strList = w_InstalledProjectsDL[i]
@@ -584,7 +589,21 @@ function BackgroundCheck(STRUCT WMBackgroundStruct &s)
 	
 	KillDataFolder/Z root:InstallerBG:
 	
+	NVAR/SDFR=dfr GitVer = GitVer
+	if (debugging)
+		Print "Updater version =", GetThisVersion()
+		Print "GitHub version =", GitVer
+	endif
+	
 	if (!gui)
+		
+		if (UpdateAvailable==1 && cmpstr(strName, "Project Updater")==0)
+			if (GetThisVersion() >= remote)
+				LogSyncWithProjectFile("8197")
+				UpdateAvailable = 0 // this may prevent us from fixing a file with version higher than current release version
+			endif 
+		endif
+			
 		if (UpdateAvailable)
 			DoAlert 1, "An IgorExchange Project update is available.\rDo you want to view updates?"
 			if (v_flag == 1)
@@ -604,20 +623,15 @@ function BackgroundCheck(STRUCT WMBackgroundStruct &s)
 			endif
 		endif
 		
-		if (checkGit)
-			NVAR/SDFR=dfr GitVer = GitVer
-			#ifdef debug
-			Print "GitHub version = ", GitVer
-			#endif
-			if (GitVer && GitVer>GetThisVersion())
-				DoAlert 1, "It looks like Updater may need to be repaired or updated\r\rDo you want to update to version " + num2str(GitVer) + "?"
-				if (v_flag == 1) // yes
-					RepairUpdater()
-				endif
+		if (checkGit && GitVer>GetThisVersion())
+			DoAlert 1, "It looks like Updater may need to be repaired or updated\r\rDo you want to update to version " + num2str(GitVer) + "?"
+			if (v_flag == 1) // yes
+				RepairUpdater()
 			endif
-		endif
+		endif	
 	endif
 	
+		
 	SVAR PID = dfr:s_project
 	
 	if (gui)
@@ -648,9 +662,9 @@ function BackgroundCheck(STRUCT WMBackgroundStruct &s)
 	
 	CtrlNamedBackground animation, stop
 	
-	#ifdef debug
-	Print "premptive task complete, number of updates available =", UpdateAvailable
-	#endif
+	if (debugging)
+		Print "preemptive task complete, number of updates available =", UpdateAvailable
+	endif
 	
 	return 1 // bg task doesn't repeat
 end
@@ -671,8 +685,8 @@ structure PackagePrefs
 	uchar options		// 1 byte, 8 bits to set
 	uchar paneloptions	// 1 byte
 	uchar dateFormat	// 1 byte, deprecated
-	uchar tab		// 1 byte to record active tab
-	STRUCT Rect win // window position and size, 8 bytes
+	uchar tab				// 1 byte to record active tab
+	STRUCT Rect win 	// window position and size, 8 bytes
 	uint32 lastCheck	// 4 bytes
 							// 28 bytes used
 	uint32 reserved[121]	// 484 bytes reserved for future use
@@ -713,7 +727,7 @@ function GetScreenHeight()
 	strInfo = strInfo[rectPos+5, strlen(strInfo)-1]
 	variable scrnLeft, scrnTop, scrnRight, scrnBottom
 	sscanf strInfo, "%d,%d,%d,%d", scrnLeft, scrnTop, scrnRight, scrnBottom
-	return scrnBottom-scrnTop
+	return scrnBottom - scrnTop
 end
 	
 function MakePrefsPanel([variable WL, variable WT])
@@ -763,7 +777,7 @@ function MakePrefsPanel([variable WL, variable WT])
 			frequencyPopMode = 5 // never
 	endswitch
 	
-	NewPanel/K=1/N=UpdaterPrefsPanel/W=(WL,WT,WL+215,WT+345) as "Settings [" + GetPragmaString("version", FunctionPath("")) + "]"
+	NewPanel/K=1/N=UpdaterPrefsPanel/W=(WL,WT,WL+215,WT+345) as "Settings"
 	ModifyPanel/W=UpdaterPrefsPanel, fixedSize=1, noEdit=1
 	
 	variable left = 15
@@ -1057,10 +1071,13 @@ function/DF SetupPackageFolder()
 		string strVersion = num2str(GetProcVersion(filePath)) // version of this procedure
 		string installPath = ParseFilePath(1, filePath, ":", 1, 0) // location of this file
 		LogUpdateProject(num2str(kProjectID), ksShortTitle, installPath, strVersion, fileName, num2istr(datetime))
+	elseif (0)
+		// check for wrong filepath
+		//LogUpdateInstallPath(string projectID, string installPath)
 	endif
 	
 	// fix for version 3.8
-	ResyncLog("8197")
+	LogSyncWithProjectFile("8197")
 	
 	return dfr
 end
@@ -1341,7 +1358,7 @@ function/S UpdateZip(filePath, url, projectID, [shortTitle, localVersion, newVer
 		unzippedIPFpathStr = unzippedIPFpathStr[strlen(unzipPathStr),Inf]
 		variable subfolders = ItemsInList(unzippedIPFpathStr, ":")-1
 			
-		if (subfolders>0) // check that directory structure at destination matches that from archive
+		if (subfolders > 0) // check that directory structure at destination matches that from archive
 			if (stringmatch(filePath, "*" + unzippedIPFpathStr) == 0)
 				// target directory doesn't match folder in archive
 				sprintf cmd, "Could not match directory structure in %s to %s\r", archiveName, packagePathStr
@@ -2209,8 +2226,8 @@ end
 // returns list of complete paths to files
 function/T RecursiveFileList(string folderPathStr, string fileName)
 	
-	variable maxLevels = 5 // quit after recursion through this many sublevels
-	variable folderLimit = 500 // quit after looking in this many folders
+	variable maxLevels = 10 // quit after recursion through this many sublevels
+	variable folderLimit = 1000 // quit after looking in this many folders
 	variable folderIndex, fileIndex, subfolderIndex, folderCount = 1, sublevels = 0
 	string folderList, indexFileName
 	string fileList = ""
@@ -3216,6 +3233,7 @@ end
 //end
 
 // removes some potential url encodings
+// probably OK to use URLDecode() instead of this?
 threadsafe function/S RemoveHexEncoding(string s)
 	Make/free/T w_encoded = {"%24","%26","%2B","%2C","%2D","%2E","%3D","%40","%20","%23","%25"}
 	Make/free/T w_unencoded = {"$","&","+",",","-",".","=","@"," ","#","%"}
@@ -3365,10 +3383,10 @@ function LogUpdateInstallPath(string projectID, string installPath)
 	string root = ""
 	string UserFilesPath = SpecialDirPath("Igor Pro User Files", 0, 0, 0)
 	string DocumentsPath = SpecialDirPath("Documents", 0, 0, 0)
-	if (stringmatch(installPath,UserFilesPath + "*"))
+	if (stringmatch(installPath, UserFilesPath + "*"))
 		root = "Igor Pro User Files"
 		installPath = installPath[strlen(UserFilesPath), Inf]
-	elseif (stringmatch(installPath,DocumentsPath + "*"))
+	elseif (stringmatch(installPath, DocumentsPath + "*"))
 		root = "Documents"
 		installPath = installPath[strlen(DocumentsPath), Inf]
 	endif
@@ -3600,13 +3618,15 @@ end
 // examines log file to figure out whether project can be updated
 // updates are not allowed for incomplete or missing projects
 function/S GetUpdateStatus(string projectID, variable localVersion, variable remoteVersion)
-	string status = GetInstallStatus(projectID)
-	if ( remoteVersion>localVersion && stringmatch(status, "complete") )
-		status += ", update available"
-	elseif (stringmatch(status, "complete"))
-		status += ", up to date"
+	string status = GetInstallStatus(projectID)	
+	if (cmpstr(status, "complete") == 0)	
+		if (remoteVersion > localVersion)
+			status += ", update available"
+		else
+			status += ", up to date"
+		endif
 	endif
-	return status
+	return status // "missing", "incomplete", "complete, up to date", or "complete, update available"
 end
 
 // returns "complete", "incomplete", or "missing" depending on how many of the installed files can be located
@@ -3854,8 +3874,8 @@ function CachePutWave(wave/T ProjectsWave, int updates)
 		sprintf s_exp, "^%s;", projectID
 		string S_Value = "" // workaround for Grep bug for Igor 8
 		Grep/Z/Q/LIST=""/INDX/E=s_exp CacheWave
-		if (strlen(s_value)) // put the cached project in list string
-			wave w_index
+		wave/Z w_index
+		if (strlen(s_value)) // put the cached project in list string	
 			// remove project from CacheWave
 			do
 				DeletePoints/M=0 (w_index[0]), 1, CacheWave
@@ -4055,8 +4075,8 @@ function RepairUpdater([int silently])
 	endif
 		
 	// It seems that requesting the file from Github with URLRequest
-	// doesn't change the eol in the updater.ipf file; in S_serverResponse
-	// the /r become /n
+	// doesn't change the eol in the updater.ipf file. 
+	// In contrast, in S_serverResponse the /r become /n
 	int success = ItemsInList(UpdateFile(FunctionPath(""), ksGitHub, "8197", shortTitle="Updater", localVersion=thisVersion, newVersion=GitHubVersion))
 	
 	if (success && LogCleanup(test=1))
@@ -4091,6 +4111,15 @@ threadsafe function GetGitHubVersion(int timeout)
 	
 	variable GitHubVersion
 	string S_Value = "" // workaround for Grep bug for Igor 8
+	
+	// if we need to fix a messed up file we can use this last-ditch method
+	// use commented line to override the version number in the file
+	Grep/Q/E="(?i)^// forced update ="/LIST/Z wProc
+	if (strlen(S_Value)) // s_value must be initiallized
+		return str2num(S_Value[18,inf])
+	endif
+	
+	// check GitHub procedure version number
 	Grep/Q/E="(?i)^#pragma[\s]*version[\s]*="/LIST/Z wProc
 	
 	if (v_flag != 0)
@@ -4174,12 +4203,14 @@ function MakeInstallerPanel()
 		
 	variable vTop = 5
 	
-	Button btnSettings, win=InstallerPanel, pos={495,vTop}, size={15,15}, Picture=Updater#cog, labelBack=0, title=""
-	Button btnSettings, win=InstallerPanel, Proc=Updater#InstallerButtonProc, help={"Change Settings"}, focusRing=0
-	
-	Button btnRefresh, win=InstallerPanel, pos={473,vTop}, size={17,17}, Picture=Updater#refresh, labelBack=0, title=""
+	Button btnRefresh, win=InstallerPanel, pos={451,vTop}, size={17,17}, Picture=Updater#refresh, labelBack=0, title=""
 	Button btnRefresh, win=InstallerPanel, Proc=Updater#InstallerButtonProc, help={"Refresh List"}, focusRing=0
 	
+	Button btnInfo, win=InstallerPanel, pos={473,vTop+1}, size={15,15}, Proc=updater#InstallerButtonProc, title=""
+	Button btnInfo, win=InstallerPanel, help={"Show Info"}, picture=updater#pInfo
+	
+	Button btnSettings, win=InstallerPanel, pos={495,vTop+1}, size={15,15}, Picture=Updater#cog, labelBack=0, title=""
+	Button btnSettings, win=InstallerPanel, Proc=Updater#InstallerButtonProc, help={"Change Settings"}, focusRing=0
 	
 	vTop += 10
 	TabControl tabs, win=InstallerPanel, pos={-10,vTop}, size={540,280}, tabLabel(0)="Projects", focusRing=0
@@ -4229,8 +4260,8 @@ function MakeInstallerPanel()
 	TitleBox statusBox, win=InstallerPanel, pos={5,vTop}, frame=0, title=""
 		
 	DoUpdate/W=InstallerPanel
-	SetWindow InstallerPanel hook(hInstallerHook)=updater#fHook	
 	SetWindow InstallerPanel userdata(version) = num2str(GetThisVersion())
+	SetWindow InstallerPanel hook(hInstallerHook)=updater#fHook	
 	
 	SetActiveSubwindow InstallerPanel
 
@@ -4264,9 +4295,12 @@ function MakeInstallerPanel()
 	Button btnSettings,win=InstallerPanel,userdata(ResizeControlsInfo)=A"!!,I]J,hj-!!#<(!!#<(z!!#o2B4uAezzzzzzzzzzzzzz!!#o2B4uAezz"
 	Button btnSettings,win=InstallerPanel,userdata(ResizeControlsInfo)+=A"zzzzzzzzzzzz!!#u:Duafnzzzzzzzzzzz"
 	Button btnSettings,win=InstallerPanel,userdata(ResizeControlsInfo)+=A"zzz!!#u:Duafnzzzzzzzzzzzzzz!!!"
-	Button btnRefresh,win=InstallerPanel,userdata(ResizeControlsInfo)=A"!!,IRJ,hj-!!#<@!!#<@z!!#o2B4uAezzzzzzzzzzzzzz!!#o2B4uAezz"
+	Button btnRefresh,win=InstallerPanel,userdata(ResizeControlsInfo)=A"!!,IGJ,hj-!!#<@!!#<@z!!#o2B4uAezzzzzzzzzzzzzz!!#o2B4uAezz"
 	Button btnRefresh,win=InstallerPanel,userdata(ResizeControlsInfo)+=A"zzzzzzzzzzzz!!#u:Duafnzzzzzzzzzzz"
 	Button btnRefresh,win=InstallerPanel,userdata(ResizeControlsInfo)+=A"zzz!!#u:Duafnzzzzzzzzzzzzzz!!!"
+	Button btnInfo,win=InstallerPanel,userdata(ResizeControlsInfo)=A"!!,IRJ,hjM!!#<(!!#<(z!!#o2B4uAezzzzzzzzzzzzzz!!#o2B4uAeAnc('ATCZK"
+	Button btnInfo,win=InstallerPanel,userdata(ResizeControlsInfo)+=A"zzzzzzzzzzzz!!#u:Duafnzzzzzzzzzzz"
+	Button btnInfo,win=InstallerPanel,userdata(ResizeControlsInfo)+=A"zzz!!#u:Du_\"OASGdjF8u:@zzzzzzzzzzzz!!!"
 		
 	// resizing userdata for panel
 	SetWindow InstallerPanel,userdata(ResizeControlsInfo)=A"!!*'\"z!!#Cg!!#BWJ,fQLzzzzzzzzzzzzzzzzzzzz"
@@ -5038,7 +5072,7 @@ end
 
 // returns string list, no shortTitle available from project page
 // projectID;ReleaseCacheDate;name;remote;system;releaseDate;releaseURL;releaseIgorVersion;releaseInfo
-// Used in premptive task
+// Used in preemptive task
 threadsafe function/S DownloadStringlistFromProjectPage(string projectID, variable timeout)
 	string url = ""
 	sprintf url, "https://www.wavemetrics.com/node/%s", projectID
@@ -5345,6 +5379,9 @@ function InstallerButtonProc(STRUCT WMButtonAction &s)
 			MakePrefsPanel()
 			PauseForUser UpdaterPrefsPanel
 			break
+		case "btnInfo" :
+			ProjectInfo()
+			break
 		case "btnRefresh" :
 			CtrlNamedBackground BGCheck, status
 			if (NumberByKey("RUN", s_info) != 0)
@@ -5567,6 +5604,7 @@ function InstallerRightClick(STRUCT WMListboxAction &s)
 					cmd += "Sync install log with file version header;"
 				endif
 			endif
+			cmd += "Remove Project from this List;"
 		else
 			cmd += "Show File Location;Recheck Local File;Recheck IgorExchange;"
 		endif
@@ -5596,10 +5634,15 @@ function InstallerRightClick(STRUCT WMListboxAction &s)
 // *** check ***
 			ReloadUpdateslist(1, 1, pid=projectID)
 			UpdateListboxWave(fGetStub())
-		elseif (v_flag == 6) // resync log file
-			ResyncLog(matchlist[s.row][%projectID])
+		elseif (stringmatch(S_selection, "Sync*"))  //v_flag == 6) // resync log file
+			LogSyncWithProjectFile(matchlist[s.row][%projectID])
 // *** check ***
 			ReloadUpdatesList(0, 1, pid=projectID)
+			UpdateListboxWave(fGetStub())
+		elseif (stringmatch(S_selection, "Remove*"))
+			LogRemoveProject(projectID)
+			ReloadUpdateslist(1, 1, pid=projectID)
+//			ReloadUpdatesList(1, 1)
 			UpdateListboxWave(fGetStub())
 		endif
 	endif
@@ -5689,10 +5732,10 @@ function UpdateListboxWave(string str)
 				HelpList[][3] += "\rFile type: " + ParseFilePath(4, matchList[p][%releaseURL], "/", 0, 0)
 				
 				wave/T UpdatesDisplayList = dfr:UpdatesDisplayList
-				#ifdef MACINTOSH // colours are not legible on Windows owing to strong colouring of selected listbox cells
+//				#ifdef MACINTOSH // colours are not legible on Windows owing to strong colouring of selected listbox cells
 				UpdatesDisplayList[][] = SelectString(stringmatch(UpdatesDisplayList[p][1], "*available"), UpdatesDisplayList, "\\K(4321,32885,448)" + UpdatesDisplayList)
 				UpdatesDisplayList[][] = SelectString(GrepString(UpdatesDisplayList[p][1], "missing|incomplete"), UpdatesDisplayList, "\\K(65535,0,0)" + UpdatesDisplayList)
-				#endif
+//				#endif
 			else
 				Make/O/N=(0,4)/T dfr:UpdatesDisplayList, dfr:UpdatesHelpList
 			endif
@@ -5799,6 +5842,76 @@ function InstallSelection()
 	#endif
 	
 	return 0
+end
+
+function/S julianstring2systemdate(string strJulian)
+	int seconds = date2secs(1995, 10, 9) + (str2num(strJulian) - 2450000) * 86400	
+	return Secs2Date(date2secs(1995, 10, 9) + (str2num(strJulian) - 2450000) * 86400, 0)
+end
+
+function AnimateButton(STRUCT WMBackgroundStruct &s)
+	
+	if (WinType("InstallerPanel") != 7)
+		return 1
+	endif
+	
+	int rotated = str2num(GetUserData("InstallerPanel", "btnRefresh", "rotated"))
+	rotated = numtype(rotated) ? 0 : rotated
+	if (!rotated)
+		Button/Z btnRefresh, win=InstallerPanel, Picture=Updater#refreshRotate, userdata(rotated)="1"
+	else
+		Button/Z btnRefresh, win=InstallerPanel, Picture=Updater#refresh, userdata(rotated)="0"
+	endif
+	return 0
+end
+
+// returns truth that this procedure file has been updated since initialisation
+function CheckPanelVersion(string win, int restart)
+	
+	string strVersion = GetUserData(win, "", "version")
+	if (strlen(strVersion) == 0)
+		#ifdef debug
+		print "entering CheckPanelVersion with wrong window?"
+		#endif	
+		return 0	
+	endif
+	
+	if (cmpstr(strVersion, num2str(GetThisVersion())))
+		if (restart)
+			DoAlert 0, "You have updated the package since this panel was created.\r\rThe package will restart to update the control panel."
+			if (restart == 1)
+				MakeInstallerPanel()
+			endif
+		else
+			DoAlert 0, "You have updated the package since this panel was created.\r\rPlease close and reopen the panel to continue."
+		endif
+		return 1
+	endif
+	return 0
+end
+
+function ProjectInfo()
+	string cmd = "(Version: " + num2str(GetThisVersion()) + ";"
+	cmd += "Visit web page;Email the developer;"
+	PopupContextualMenu cmd
+	if (V_flag == 2)
+		BrowseURL /Z "https://www.wavemetrics.com/node/8197"
+	elseif (V_flag == 3)
+		make/T/free/N=5 wt = "mail"
+		string newline = "\r"
+		#ifdef WINDOWS
+		newline = "\n"
+		#endif
+		wt[3] = "subject=" + URLencode("Updater Package for Igor Pro")
+		wt[4] = "Type your message here" + newline + newline
+		wt[4] += "VERSION:" + num2str(GetThisVersion()) + newline
+		wt[4] += ReplaceString(";", IgorInfo(3), newline) + newline
+		wt[4] = "body=" + URLencode(wt[4])
+		wt[1] = "tony withers"
+		wt[2] = "uni-bayreuth de"
+		sprintf cmd, "%sto:%s%%%d%s?%s&%s" wt[0], wt[1], 40, wt[2], wt[3], wt[4]
+		BrowseURL/Z ReplaceString(" ", cmd, ".")
+	endif
 end
 
 // ----------------------- filter code ----------------------------
@@ -6274,6 +6387,52 @@ Picture refreshRotate
 	ASCII85End
 end
 
+// PNG: width= 90, height= 30
+Picture pInfo
+	ASCII85Begin
+	M,6r;%14!\!!!!.8Ou6I!!!"&!!!!?#R18/!3BT8GQ7^D&TgHDFAm*iFE_/6AH5;7DfQssEc39jTBQ
+	=U#t@KS5u_NKc'hjQ<7_k>^N6#'iu's#@iL6?EN#,SR%ORqWY?g_DQ6ZakX-9m6UF`Y7B5's^*$E%B
+	u3<(a:i;5<Ct\*^a)hT'K%0QC]d[0jPV;N@+9cG@fjB`p38^oR<*NngmMP4QXaLkr6j/Tp8k\$ZiA^
+	F[J/@;&;!fa/0Y"8EKlO!*92tV8I!509L_n[prdb[0DD]b^77\4Qh+<X22WSL=^Tpl!>%R?bOV1l`F
+	.H/kj.Q0YHO!p0Z_o!(t!"2!0>1<o&\&oX/k93#9I:/\ol*"]HFk2"&^kI,Op^Po$LJ:qE[=Zdn*%1
+	/%c)$r:,4%r)#UgVCL9-4fb:)2uc00,SCF2g"FKhP:)ciSp&'<om1=hD5F)*"ddDT8%a$Z"blrKB1V
+	t"bqBnEcNrlWWRU];Q?b;\6c%+`!0V&SGg^%NRV$e":,J(6+Q,'.qs8WXZ?]HQd?\@;-q_mAJ,]9,i
+	ondb3ItHg(Zjc?GW[$h>t<@#!7L*gWDnag1eK/1,*>Cr1P3*D[BX`3`d.+2D9NUG(..rXX^7$1"@82
+	!1KE^Ub4(b^NWMsF;Ht6&&;b$b#dun1L:o\#UFM.3gNK`n[l7Cp+c[X/cDaa?O<b.!b=-Pr2.^?1Nd
+	)e2#U:Q=,SCE:&8^%*L$dX(UQj\B/Bea\(..rm00Qspp'-Bu;ci@[g2Ab(7h`\ZA=S45.(4!_jMmH)
+	qUNK^MN[#3[D>08n\uMdd,!N;U*ru@<Dd(/5&X;O&;3@n7RotRD4?;%HAGk=G+fW.>tiHTqLp0W7=4
+	1t\u)fWAJng`QIdQ"8TJr%$paau+6@''?G#H(RO^<AUs^^G[]\cSB@c5aI;=JigY9^3e#1T9SXPucg
+	hq>mG`bOMiSe2FC2.Jjp@_T>`piIOWDnc;k%;&=gQn1M0p,[l:OIIe[!*"QkrNrEAXG*0N(r07]$fZ
+	h/$5=fV3Tb,=$\psV/^EJ)4IFB]PEW'\qbg(SsMlA:JXaHWi@OR/f1s5k:MsaPoMc&J--#d&-rCGg1
+	@0&:")(CjpXC94`bia)`#WJ(G?agO/a)!%!Za'1b>,JjlN'!=]&V5U;CI@Et9%o2-h+N"!1EAB5`,M
+	Th&'lHW;8P&FJlPBUVCZ77C(9D;1qiXUW&&O5KD=a,V0/D%4B*&."qC)Xk?1%Zs:M/7mre"!%<ET2<
+	bOD<cB%HGLYk/]p$:.Z,bn[7sj`?B9ZXXV6Rq]_Pti2gd\J3f(i:R&5_pm4KmDXm$aS/B^J!/^)#uG
+	%6sfYult1cH[_1nRTfUip]H>d<$0>4r9NH8sWQ9)djkQAg3E#:]C\]o'uTN1rJBf7mE:cKPfJ<US@o
+	sfC=1##U)g+pYUIm80gMI'&gcc'97IQ?8%%Ad+-[#D;.]AGGtPU1e&m.iUpnuW^=]Xm<&%d+jRgmR6
+	q<!"K4)c%%V>s6.boU<k:W9@PN6o+0)@'G&kQ@q=8),*BN8CpR@_H@2O[8@=!9Ifs"n;A,h79HFe;'
+	<AQ<<*SW3\4hYn'7c+!LCK<HgOtdE6\7T^B_C4`os.\g?L1-<OUon"8QFD=fRPcBo,tYs-%!5e<il-
+	gK-hM%Q-;cW@=dI0o(g+V`I[7Hll^gmF1C8U`9;n:SDf?'4kXX)YA6CN6o]r]qT!s1+^3pK)B6pt_B
+	a+O@`IRg8=:@XkJL"[Wg"k-TK%RqsK*5:)MTX360]U/4Wi@77;Jt3uP7<CJ.#Pn:q"VM]0-o&(8.o9
+	`MEo2(5'MS@J+Rq@q<5kKI!A\?`c`\j5Xs.C`^\u^];Gr<!]0NL(T`^;0>7#+XNrGfbj/DFR`<:aKO
+	an5L'f'H$C6<N=ieH_Ns:8r/-F>E>*(o2.ET1%BpgNq9:F_:'kIT8!)),C3GlcmYHU;j&0aK<:WMel
+	3Ze-Om%!i`\)#_:DlKDdZeWg@P_C[O5M'iUB8>_-2HE;O1>jM;$8=V+SNHPXHb;/UA2:]pC+19D\Bd
+	qtPsUXEa5qKga#B2SZ=.SRp%A!RdqL(!Ea7bt3ql@F;Uj=M08??L+[=OW75>HDQ5.GO:69br-505tC
+	KaJC@jCMg**JRJQascSIH0iWNK&pUTkRi35A[F<CY2`i#$#_f\:6RcLI9_:V"&,4[]HN!OfQlP*Qtb
+	VGkuA?F_!6F<)ocgU#D#V(':e98CFiHpC[p2PjB,D#;1";i6n,<g%nVGOf<>lBjHXs8BA(fD;DdgE&
+	_+N0,P*1$jPnaB'W+c:JFR2daE`AbT2\$"\Atc30k=3]2,.R>E*Nf"c^j@=F?-EhKuZgDlI9;bg[c+
+	#@$`/2$kB@MhsTDp>G]B0oZ#`%fgeAhHcB?i5($LInM,P9MS?gJ,auQDYK=UG;=]pX[t0`Ddn+h)@5
+	*f*'#BK+[7+e+25ad[WOTm!ShS%o^pU.1GgqQgF=j%Y7Q;ZTcp"RlDZ'E)=kG_qYSr#Wb]AY@*-(nJ
+	s#A#q"YFMfsgRh]Kt<,gI6=12lg#`?;TLp_*KtthTY]\gR%W:!I8"sroVaPFBo;RFjF5*7K$9'/M"a
+	&=8b8<:r],W]a;6"MF%U=g2!m3l-^kmCMU]X>\[CWf<8QErql0Iq<+A?>3\a$'Y&&M_Vt+amGf@imo
+	bQW3d]\44-GFK,M+U?MapjQn$rZ2MO]A366&(1N))Y5K\G-`9XF4l;%/:LK#,8h*dQfYG3mlOSIcZr
+	>bLn*pC6ZP>8Kg\bG_@CKr2I%"\bg,9T7gnab8=Dm!=-WrDiH(kdbct`7o4FNN0!X<E0c>,]?+,R:L
+	D]PZ0,$>?`&92Jr:c#b4?2.q.C==rdOGT-GEe&/PNlY926R6do>OS3)p0O\R3Y8&I`m-S_GCD(TPUp
+	#Oh0$f?=CMoA(S7gE=*>mMVCq0YVL.YYcK,Y=`@\X=h:G[ec2^3h=YF;C/g`2VT*c?qXpKj]]U?cVq
+	fC?DNujYDHgQ#<&Y/Z3l"'p#PjIED$6^p\*"iPGcpqYD$G(gq`=S8``85)IVK,7k,W='%mZ6N^%W9s
+	ZH4Ib4'RZ77*WgpE7az8OZBBY!QNJ
+	ASCII85End
+end
+
 // ------------------- from UserProcLoader, but modified ---------------
 
 // search recursively for ipf files and return list of files as textwave
@@ -6447,27 +6606,46 @@ end
 
 // cleans up version number in log
 // when project has been updated outside of updater
-function ResyncLog(string projectID)
+function LogSyncWithProjectFile(string projectID)
 	string fileList = LogGetFileList(projectID)
-	string filePath = StringFromList(0,ListMatch(fileList, "*.ipf"))
+	string filePath = StringFromList(0, ListMatch(fileList, "*.ipf"))
 	if (!isFile(filePath))
-		return 0
+		return -1
 	endif
 	variable fileVersion = GetProcVersion(filePath)
 	string strLine = LogGetProject(projectID)
 	int itemNum = 2
-	strLine = RemoveListItem(itemNum, strLine)
-	strLine = AddListItem(num2str(fileVersion), strLine, ";", itemNum)
-	LogReplaceProject(projectID, strLine)
-	CacheClearUpdates(projectID=projectID)
+	variable logVersion = str2num(StringFromList(itemNum, strLine))
+	
+	if (fileVersion != logVersion)
+		strLine = RemoveListItem(itemNum, strLine)
+		strLine = AddListItem(num2str(fileVersion), strLine, ";", itemNum)
+		LogReplaceProject(projectID, strLine)
+		CacheClearUpdates(projectID=projectID)
+		
+		#ifdef debug
+		string cmd = ""
+		sprintf cmd, "Resynching log for %s. Log version (%g) was reset to match file version (%g).", StringFromList(1, strLine), logVersion, fileVersion 
+		print cmd
+		#endif	
+		return 1
+	endif
+	
+	return 0
 end
 
 function WriteToHistory(string str, STRUCT PackagePrefs &prefs, int alert)
 	if (strlen(str)==0)
 		return 0
 	endif
+	
+	int forced = 0
+	#ifdef debug
+	forced = 1
+	#endif
+	
 	str = RemoveEnding(str, "\r")
-	if (prefs.options & 2) // copy to experiment history
+	if (forced || (prefs.options & 2)) // copy to experiment history
 		Print str
 	endif
 	if (alert)
@@ -6479,12 +6657,15 @@ function WriteToHistory(string str, STRUCT PackagePrefs &prefs, int alert)
 	if (V_flag)
 		return 0
 	endif
-		
-	fprintf refnum, "%s %s %s\r\n", date(), time(), str
+	
+	// convert 'narrow no-break space' character in Apple Sonoma's system time to an ASCII space
+	string strTime = ReplaceString(num2char(0x202F), time(), " ")
+	
+	fprintf refnum, "%s %s %s\r\n", date(), strTime, str
 	Close refnum
 		
 	if (WinType("HistoryPanel") == 7)
-		sprintf str, "%s %s %s\r\n", date(), time(), str
+		sprintf str, "%s %s %s\r\n", date(), strTime, str
 		Notebook HistoryPanel#nbHistory selection={EndOfFile,EndOfFile}, text="•"+str
 	endif
 		
@@ -6599,7 +6780,9 @@ function PrepareProjectRelease()
 	endif
 		
 	printf "\r * Preparing project release for %s *\r", shortTitle
-		
+	
+	
+	// try to check for missing include statements	
 	string listOfIncludedWMprocs = WinList("*", ";", "INCLUDE:4")
 	listOfIncludedWMprocs = CleanIncludesList(listOfIncludedWMprocs)
 	
@@ -6610,11 +6793,11 @@ function PrepareProjectRelease()
 	int numAllIncludedProcs = ItemsInList(listOfIncludedWMprocs)
 	int numFiles = ItemsInList(filePath)
 	int numFunctions
-	int included
+	int includedInRelease
 	
 	for (i=0;i<numAllIncludedProcs;i++)
 		WMProc = StringFromList(i, listOfIncludedWMprocs)
-		included = 0
+		includedInRelease = 0
 		for (j=0;j<numFiles;j++)
 			theFile = StringFromList(j, filePath)
 			if (!stringmatch(theFile, "*.ipf"))
@@ -6622,12 +6805,12 @@ function PrepareProjectRelease()
 			endif
 			Grep/Q/E="^#include\s*<\s*"+WMProc theFile
 			if (v_value)
-				included = 1
+				includedInRelease = 1
 				break
 			endif
 		endfor
 		
-		if (included)
+		if (includedInRelease)
 			continue
 		endif
 			
@@ -6701,8 +6884,8 @@ function PrepareProjectRelease()
 	printf "Version (String) Suggestion: IGOR.%0.2f.x-%0.2f\r", IgorVer, version
 	Print "\"Version - Date\" fields should be cleared"
 	printf "Version - Major: %g\r", floor(version)
-	printf "Version - Patch: %g\r", mod(version, 1)*100
-	Print "\"Version - Extra\" will not trigger an update notification for users"
+	printf "Version - Patch: %02.0f\r", mod(version, 1)*100
+	Print "\"Version - Extra\" changing this field will not trigger an update notification for users"
 	printf "Release Identifier Suggestion: %s IGOR.%0.2f.x-%0.2f\r", shortTitle, IgorVer, version
 	printf "Igor Version: %g (Check that this is correct, nothing to fill on release page)\r", IgorVer
 	printf "Upload file from desktop: %s\r", archive
@@ -6914,42 +7097,4 @@ function CreateInstallScript()
 	NewPath/O/Q/Z TempInstallPath ParseFilePath(1, S_fileName, ":", 1, 0)
 	PathInfo/SHOW TempInstallPath	// show file on desktop
 	KillPath/Z TempInstallPath
-end
-
-function /S julianstring2systemdate(string strJulian)
-	int seconds = date2secs(1995, 10, 9) + (str2num(strJulian) - 2450000) * 86400
-	
-	return Secs2Date(date2secs(1995, 10, 9) + (str2num(strJulian) - 2450000) * 86400, 0)
-end
-
-function AnimateButton(STRUCT WMBackgroundStruct &s)
-	
-	if (WinType("InstallerPanel") != 7)
-		return 1
-	endif
-	
-	int rotated = str2num(GetUserData("InstallerPanel", "btnRefresh", "rotated"))
-	rotated = numtype(rotated) ? 0 : rotated
-	if (!rotated)
-		Button/Z btnRefresh, win=InstallerPanel, Picture=Updater#refreshRotate, userdata(rotated)="1"
-	else
-		Button/Z btnRefresh, win=InstallerPanel, Picture=Updater#refresh, userdata(rotated)="0"
-	endif
-	return 0
-end
-
-// returns truth that this procedure file has been updated since initialisation
-static function CheckPanelVersion(string win, int restart)
-	if (cmpstr(GetUserData(win, "", "version"), num2str(GetThisVersion())))
-		if (restart)
-			DoAlert 0, "You have updated the package since this panel was created.\r\rThe package will restart to update the control panel."
-			if (restart == 1)
-				MakeInstallerPanel()
-			endif
-		else
-			DoAlert 0, "You have updated the package since this panel was created.\r\rPlease close and reopen the panel to continue."
-		endif
-		return 1
-	endif
-	return 0
 end
