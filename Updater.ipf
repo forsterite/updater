@@ -1,6 +1,6 @@
 #pragma TextEncoding="UTF-8"
 #pragma rtGlobals=3
-#pragma version=4.70
+#pragma version=4.9
 #pragma IgorVersion=8
 #pragma IndependentModule=Updater
 #include <Resize Controls>
@@ -138,7 +138,7 @@ strconstant ksGitHub = "https://raw.githubusercontent.com/forsterite/updater/mai
 // User-configurable settings are accessible from the control panel: Misc -> IgorExchange Projects...
 
 //#define testing
-//#define debug
+#define debug
 
 menu "Misc"
 	"-"
@@ -465,6 +465,7 @@ threadsafe function/WAVE DownloadProjectsList(variable timeout, string ProjectLi
 			
 			// project types
 			selEnd = pStart
+			strType = ""
 			do
 				selStart = strsearch(S_serverResponse, "/taxonomy/", selEnd, 2)
 				selStart = strsearch(S_serverResponse, ">", selStart, 0)
@@ -472,7 +473,7 @@ threadsafe function/WAVE DownloadProjectsList(variable timeout, string ProjectLi
 				if (selStart<pStart || selEnd>pEnd || selEnd<1 )
 					break
 				endif
-				strType = S_serverResponse[selStart+1,selEnd-1] + ","
+				strType += S_serverResponse[selStart+1,selEnd-1] + ","
 			while (1)
 			
 			// date
@@ -601,7 +602,7 @@ function BackgroundCheck(STRUCT WMBackgroundStruct &s)
 			if (GetThisVersion() >= remote)
 				LogSyncWithProjectFile("8197")
 				UpdateAvailable = 0 // this may prevent us from fixing a file with version higher than current release version
-			endif 
+			endif
 		endif
 			
 		if (UpdateAvailable)
@@ -626,20 +627,19 @@ function BackgroundCheck(STRUCT WMBackgroundStruct &s)
 		if (checkGit && GitVer>GetThisVersion())
 			DoAlert 1, "It looks like Updater may need to be repaired or updated\r\rDo you want to update to version " + num2str(GitVer) + "?"
 			if (v_flag == 1) // yes
-				RepairUpdater()
+				RepairUpdater() 
 			endif
-		endif	
+		endif
 	endif
-	
-		
+			
 	SVAR PID = dfr:s_project
 	
 	if (gui)
 		ControlInfo/W=InstallerPanel tabs
 		if (v_value == 0)
-			ReloadProjectsList(forced=1)
+			ReloadProjectsList(forced=1) // force load from cache
 		else
-			ReloadUpdatesList(1, 1)
+			ReloadUpdatesList(1, 1) // force reload of local file
 		endif
 		UpdateListboxWave(fGetStub())
 		SelectProject(PID)
@@ -659,7 +659,7 @@ function BackgroundCheck(STRUCT WMBackgroundStruct &s)
 		prefs.lastCheck = datetime
 		SavePackagePreferences ksPackageName, ksPrefsFileName, 0, prefs
 	endif
-	
+		
 	CtrlNamedBackground animation, stop
 	
 	if (debugging)
@@ -697,7 +697,7 @@ function PrefsSetDefault(STRUCT PackagePrefs &prefs)
 	prefs.version      = kPrefsVersion
 	prefs.frequency    = 604800 // weekly
 	prefs.pagetimeout  = 6
-	prefs.filetimeout  = 12
+	prefs.filetimeout  = 15
 	prefs.options      = 0 // bit 0 save backups, 1 print to history, 2 limit release check to installed files
 	prefs.paneloptions = 0 // bit 0: tab, bit 1: bigger panel, bit 2: select user proc folder in popup menu
 	prefs.dateformat   = 0 // deprecated
@@ -739,7 +739,7 @@ function MakePrefsPanel([variable WL, variable WT])
 	
 	GetWindow/Z InstallerPanel wsizeRM
 	if (v_flag == 0)
-		WL = ParamIsDefault(WL) ? V_right-200 : WL
+		WL = ParamIsDefault(WL) ? V_right : WL
 		WT = ParamIsDefault(WT) ? V_top : WT
 	endif
 	
@@ -787,8 +787,6 @@ function MakePrefsPanel([variable WL, variable WT])
 	top += 30
 	Button btnClearCache,win=UpdaterPrefsPanel,pos={left,top},title="Clear Cache",size={85,22},Proc=updater#PrefsButtonProc
 	Button btnClearCache,win=UpdaterPrefsPanel,help={"Clear downloaded project release info from cache"}
-	Button BtnHistoryPanel,win=UpdaterPrefsPanel,pos={110,top},title="Show History",size={90,22},Proc=updater#PrefsButtonProc
-	Button BtnHistoryPanel,win=UpdaterPrefsPanel,help={"Open installation and update history"}
 	top += 30
 	PopupMenu popFrequency,win=UpdaterPrefsPanel,pos={left,top},value="always*;daily;weekly;monthly;never;"
 	PopupMenu popFrequency,win=UpdaterPrefsPanel,title="Check for Updates", mode=frequencyPopMode, fsize=12
@@ -833,14 +831,6 @@ function MakePrefsPanel([variable WL, variable WT])
 		// reset panel resolution
 		Execute/Q/Z "SetIgorOption PanelResolution=" + num2istr(oldResolution)
 	endif
-	
-//	PauseForUser UpdaterPrefsPanel, HistoryPanel
-	
-//	PauseForUser works with graph, table, and panel windows only
-//	PauseForUser UpdaterPrefsPanel, HistoryNotebook
-// could make a panel with a new notebook as subwindow, dump text from history into notebook.
-// Add a save button to overwrite history file.
-
 end
 
 function PrefsButtonProc(STRUCT WMButtonAction &s)
@@ -851,52 +841,13 @@ function PrefsButtonProc(STRUCT WMButtonAction &s)
 	int redraw = 0
 	string filepath = ""
 	strswitch (s.ctrlName)
-		case  "BtnRepair":
+		case "BtnRepair":
 			if (RepairUpdater())
 				KillWindow/Z $s.win
 			endif
 			return 0
 		case "BtnClearCache":
 			return CacheClearAll()
-		case "BtnHistoryPanel":
-
-			filePath = GetInstallerFilePath(ksHistoryFile)
-			if (WinType("HistoryPanel") == 7)
-				DoWindow/F HistoryPanel
-				 
-			else
-				// read history file into a notebook embedded in a panel
-				GetWindow $s.win wsizeRM
-				NewPanel/K=1/N=HistoryPanel/W=(v_right, v_top, v_right+300, v_top+500) as "History"
-				variable grout = 5
-				DefineGuide/W=HistoryPanel Ftop = {FT, 30}
-				DefineGuide/W=HistoryPanel Fbottom = {FB, -grout}
-				DefineGuide/W=HistoryPanel Fleft = {FL, grout}
-				DefineGuide/W=HistoryPanel Fright = {FR, -grout}
-				NewNotebook/F=1/N=nbHistory/HOST=HistoryPanel/FG=(Fleft,Ftop,Fright,Fbottom)/OPTS=8
-				SetWindow HistoryPanel#nbHistory, activeChildFrame=0
-				Grep/Q/E=""/LIST="\r•" filePath // no need for Igor 8 workaround because s_value is created by GetWindow
-				Notebook HistoryPanel#nbHistory selection={startOfFile,endofFile}, margins={0,0,2000}, text=RemoveEnding(s_value, "•")
-				Notebook HistoryPanel#nbHistory selection={startOfFile,startOfFile}, findText={"",1}
-				Button btnHistoryClear win=HistoryPanel, pos={5,5}, title="Clear All", size={60,20}, Proc=PrefsButtonProc
-				Button btnHistoryShow win=HistoryPanel, pos={75,5}, title="Show File", size={75,20}, Proc=PrefsButtonProc
-				Button btnHistoryOpen win=HistoryPanel, pos={160,5}, title="Open as Notebook", size={125,20}, Proc=PrefsButtonProc
-				// Reset PauseForUser to allow interaction with the panel
-				MakePrefsPanel(WL=v_left, WT=v_top)
-				PauseForUser UpdaterPrefsPanel, HistoryPanel
-				SetWindow HistoryPanel hook(hHistoryPanel)=hookHistoryPanel
-			endif
-			break
-			
-//			if (WinType("HistoryNotebook") == 5)
-//				DoWindow/F HistoryNotebook
-//			elseif (s.eventMod & 4) // option/alt
-//				OpenNotebook/K=1/Z/N=HistoryNotebook filePath
-//			else
-//				OpenNotebook/K=1/Z/R/N=HistoryNotebook filePath
-//			endif
-//return 0
-
 		case "btnHistoryClear":
 			DoAlert/T="Clear All History" 1, "Are you sure you want to clear the History log file?"
 			if (v_flag == 1)
@@ -924,7 +875,6 @@ function PrefsButtonProc(STRUCT WMButtonAction &s)
 			OpenNotebook/Z/N=HistoryNotebook/W=(V_left,v_top,v_right,v_bottom) filePath
 			Notebook HistoryNotebook, writeProtect=1
 			KillWindow/Z $s.win
-			KillWindow/Z UpdaterPrefsPanel
 			break
 		case "ButtonSave":
 			// run PrefsSync, return value tells us whether updates need to be made
@@ -951,17 +901,6 @@ function hookPrefsPanel(STRUCT WMWinHookStruct &s)
 		sb.eventCode = 2
 		PrefsButtonProc(sb)
 		return 1
-	endif
-	return 0
-end
-
-function hookHistoryPanel(STRUCT WMWinHookStruct &s)
-	if (s.eventCode != 2) // kill
-		return 0
-	endif
-	if (WinType("UpdaterPrefsPanel") == 7)
-		MakePrefsPanel()
-		PauseForUser UpdaterPrefsPanel
 	endif
 	return 0
 end
@@ -1039,7 +978,7 @@ function/DF SetupPackageFolder()
 	NewDataFolder/O root:Packages
 	NewDataFolder/O root:Packages:Installer
 	DFREF dfr = root:Packages:Installer
-	variable/G dfr:stubLen = 0
+//	variable/G dfr:stubLen = 0
 	wave/T/SDFR=dfr/Z ProjectsFullList, UpdatesFullList
 	
 	// create wave to hold names of all available projects
@@ -1048,7 +987,7 @@ function/DF SetupPackageFolder()
 	endif
 	
 	// create wave to hold names of projects that have updater compatibility
-	// dimsize of this wave is checked in reloadUpdatesList
+	// dimsize of this wave is checked in ReloadUpdatesList
 	if (WaveExists(UpdatesFullList) == 0)
 		Make/O/T/N=(0,15) dfr:UpdatesFullList /WAVE=UpdatesFullList, dfr:UpdatesMatchList /WAVE=UpdatesMatchList
 	endif
@@ -1560,9 +1499,17 @@ function GetIgorVersion() // windows-safe
 end
 
 // wrapper for GetFileFolderInfo
-function isFile(string filePath)
-	GetFileFolderInfo/Q/Z filePath
-	return V_isFile
+threadsafe function isFile(string filePath)
+//	GetFileFolderInfo/Q/Z filePath
+//	return V_isFile
+	
+	variable status, refnum
+	Open/Z/R refnum as filePath
+	if (v_flag == 0)
+		status = 1
+		Close refnum
+	endif
+	return status
 end
 
 // extract procedure version from file
@@ -1619,17 +1566,14 @@ function GetThisVersion()
 end
 
 // extract project ID from file and return as string
-function/S GetProjectIDString(string filePath)
+threadsafe function/S GetProjectIDString(string filePath)
 	variable projectID = GetConstantFromFile("kProjectID", filePath)
 	if (numtype(projectID) == 0)
 		return num2istr(projectID)
 	endif
-	// for backward compatibility, try getting projectID from all releases URL
-	string url = GetStringConstFromFile("ksLocation", filePath)
-	return ParseFilePath(0, url, "/", 1, 0) // returns "" on failure
 end
 
-function/S GetPragmaString(string strPragma, string filePath)
+threadsafe function/S GetPragmaString(string strPragma, string filePath)
 	if (isFile(filePath) == 0)
 		return ""
 	endif
@@ -1670,7 +1614,7 @@ function GetPragmaVariable(string strPragma, string filePath)
 end
 
 // maybe better to use simply GetStringConstFromFile("ksShortTitle", filePath)
-function/S GetShortTitle(string filePath)
+threadsafe function/S GetShortTitle(string filePath)
 	variable selStart, selEnd
 	string shortTitle = GetStringConstFromFile("ksShortTitle", filePath)
 	if (strlen(shortTitle) == 0)
@@ -1700,7 +1644,7 @@ function/S GetShortTitle(string filePath)
 end
 
 // extract a static string constant from a procedure file by reading from disk
-function/S GetStringConstFromFile(string constantNameStr, string filePath)
+threadsafe function/S GetStringConstFromFile(string constantNameStr, string filePath)
 	string s_exp = "", s_out = ""
 	sprintf s_exp, "(?i)^[\s]*static[\s]*strconstant[\s]*%s[\s]*=", constantNameStr
 	string S_Value = "" // workaround for Grep bug for Igor 8
@@ -1718,7 +1662,7 @@ function/S GetStringConstFromFile(string constantNameStr, string filePath)
 end
 
 // extract a static constant from a procedure file by reading from disk
-function GetConstantFromFile(string strName, string filePath)
+threadsafe function GetConstantFromFile(string strName, string filePath)
 	if (isFile(filePath) == 0)
 		return NaN
 	endif
@@ -1804,61 +1748,82 @@ function/WAVE ParseAllReleasesAsWave(string AllReleasesText)
 	variable selStart = -1, selEnd = -1, blockStart, blockEnd, selFound
 	string projectName = "", releaseMajor = "", releaseMinor = "", releaseExtra = ""
 	string url = "", platform = "", versionDate = "", requiredVersion = ""
+	
+	variable reqIgorVersion, releaseVersion
+	
 	int i = 0
 	
+	string strTitleStart = "<h1 class=\"page-title\" title=\""
+	string strReleaseStart = "<div class=\"project-release-info\">"
+	string strReleaseEnd = "<div class=\"project-release-footer\">"
+	string strVersionStart = "\"field-paragraph-version\">"
+	string strDateStart = "\"field-paragraph-version-date\"><time datetime=\""
+	string strMajorStart = "\"field-paragraph-version-major\">"
+	string strPatchStart = "\"field-paragraph-version-patch\">"
+	string strExtraStart = "\"field-paragraph-version-extra\">"
+	string strLinkStart = "\"field-paragraph-file\""
+	string strWindows = "<span class=\"entity-reference\">Windows</span>"
+	string strMac = "<span class=\"entity-reference\">Mac-"
+	
+	
 	// locate project name
-	selStart = strsearch(AllReleasesText, "<h1 class=\"page-title\" title=\"Releases for ", blockStart, 2)
-	selStart += 43
+//	selStart = strsearch(AllReleasesText, "<h1 class=\"page-title\" title=\"Releases for ", blockStart, 2)
+	
+	selStart = strsearch(AllReleasesText, strTitleStart, blockStart, 2)
+	selStart += strlen(strTitleStart)
 	selEnd = strsearch(AllReleasesText, "\"", selStart, 2)
-	if (selStart<43 || selEnd>(selStart+150))
+	if (selStart<strlen(strTitleStart) || selEnd>(selStart+150))
 		return w_releases
 	endif
 	projectName = AllReleasesText[selStart, selEnd-1]
 
 	do
 		// find start and end of project release fields
-		selStart = strsearch(AllReleasesText, "<div class=\"project-release-info\">", selStart, 2)
+		selStart = strsearch(AllReleasesText, strReleaseStart, selStart, 2)
 		if (selStart == -1)
 			break
 		endif
 		blockStart = selStart
-		selEnd = strsearch(AllReleasesText, "<div class=\"project-release-footer\">", selStart, 2)
+		selEnd = strsearch(AllReleasesText, strReleaseEnd, selStart, 2)
 		if (selEnd == -1)
 			break
 		endif
 		blockEnd = selEnd
 		
 		// locate version info
-		selStart = strsearch(AllReleasesText, "\"field-paragraph-version\">", blockStart, 2)
-		selStart += 26
+		selStart = strsearch(AllReleasesText, strVersionStart, blockStart, 2)
+		selStart += strlen(strVersionStart)
 		selEnd = strsearch(AllReleasesText, "<", selStart, 2)
-		if (selStart<blockStart || selEnd>blockEnd)
-			break
+		if (selStart>blockStart && selEnd<blockEnd)
+			requiredVersion = AllReleasesText[selStart, selEnd-1]
+			sscanf (LowerStr(requiredVersion)), "igor.%f.x-%f", reqIgorVersion, releaseVersion
+			if (V_flag == 2)
+				requiredVersion = num2str(reqIgorVersion)
+			else // version string doesn't have strict formatting from old IgorExchange site
+				requiredVersion = "0"
+				// no way to figure out required Igor version prior to download
+			endif
 		endif
-		requiredVersion = AllReleasesText[selStart, selEnd-1]
-		
+				
 		// locate version date
-		selStart = strsearch(AllReleasesText, "\"field-paragraph-version-date\">", blockStart, 2)
-		selStart += 31
-		selEnd = strsearch(AllReleasesText, "<", selStart, 2)
+		selStart = strsearch(AllReleasesText, strDateStart, blockStart, 2)
+		selStart += strlen(strDateStart)
+		selEnd = strsearch(AllReleasesText, "\"", selStart, 2)
 		if (selStart<blockStart || selEnd>blockEnd)
 			break
 		endif
-		versionDate = AllReleasesText[selStart, selEnd-1]
+		versionDate = num2istr(ISO8601toJulian(AllReleasesText[selStart, selEnd-1]))
 		
-		selStart = strsearch(AllReleasesText, "\"field-paragraph-version-major\">", blockStart, 2)
-		selStart += 32
+		selStart = strsearch(AllReleasesText, strMajorStart, blockStart, 2)
+		selStart += strlen(strMajorStart) // 32
 		selEnd = strsearch(AllReleasesText, "<", selStart, 2)
 		if (selStart<blockStart || selEnd>blockEnd)
 			break
 		endif
 		releaseMajor = AllReleasesText[selStart, selEnd-1]
 		
-		// fix for error in version 3.8 of updater
-		releaseMajor = SelectString( stringmatch(releaseMajor, "400000"), releaseMajor, "4" )
-		
-		selStart = strsearch(AllReleasesText, "\"field-paragraph-version-patch\">", blockStart, 2)
-		selStart += 32
+		selStart = strsearch(AllReleasesText, strPatchStart, blockStart, 2)
+		selStart += strlen(strPatchStart) // 32
 		selEnd = strsearch(AllReleasesText, "<", selStart, 2)
 		if (selStart<blockStart || selEnd>blockEnd)
 			releaseMinor = "0" // patch not found - field may be missing
@@ -1866,8 +1831,8 @@ function/WAVE ParseAllReleasesAsWave(string AllReleasesText)
 			releaseMinor = AllReleasesText[selStart, selEnd-1]
 		endif
 		
-		selStart = strsearch(AllReleasesText, "\"field-paragraph-version-extra\">", blockStart, 2)
-		selStart += 32
+		selStart = strsearch(AllReleasesText, strExtraStart, blockStart, 2)
+		selStart += strlen(strExtraStart) // 32
 		selEnd = strsearch(AllReleasesText, "<", selStart, 2)
 		if (selStart<blockStart || selEnd>blockEnd)
 			releaseExtra = "" // field not present for this release
@@ -1876,7 +1841,7 @@ function/WAVE ParseAllReleasesAsWave(string AllReleasesText)
 		endif
 		
 		// find download link
-		selStart = strsearch(AllReleasesText, "\"field-paragraph-file\"", blockStart, 2)
+		selStart = strsearch(AllReleasesText, strLinkStart, blockStart, 2)
 		selStart = strsearch(AllReleasesText, "<a href=\"", selStart, 2)
 		selStart += 9
 		selEnd = strsearch(AllReleasesText, "\"", selStart, 2)
@@ -1886,11 +1851,11 @@ function/WAVE ParseAllReleasesAsWave(string AllReleasesText)
 		url = AllReleasesText[selStart, selEnd-1]
 				
 		platform = ""
-		selFound = strsearch(AllReleasesText, "<span class=\"entity-reference\">Windows</span>", blockStart, 2)
+		selFound = strsearch(AllReleasesText, strWindows, blockStart, 2)
 		if (selFound>blockStart && selFound<blockEnd)
 			platform += "Windows;"
 		endif
-		selFound = strsearch(AllReleasesText, "<span class=\"entity-reference\">Mac-", blockStart, 2)
+		selFound = strsearch(AllReleasesText, strMac, blockStart, 2)
 		if (selFound>blockStart && selFound<blockEnd)
 			platform += "Macintosh;"
 		endif
@@ -1903,6 +1868,11 @@ function/WAVE ParseAllReleasesAsWave(string AllReleasesText)
 	while (i < 1000)
 	return w_releases
 end
+//{{projectName},{requiredVersion},{releaseMajor},{releaseMinor},{url},{platform},{versionDate},{releaseExtra}}
+
+
+
+// NEW FOR VERSION 4.8: insert https://www.wavemetrics.com/ in URL
 
 // Parse html in project web page to find releases. Returns a string list:
 // projectID;ReleaseCacheDate;title;remote;system;releaseDate;releaseURL;releaseIgorVersion;releaseInfo;
@@ -1913,84 +1883,68 @@ threadsafe function/S ParseProjectPageAsList(string projectID, string WebPageTex
 		
 	string name = "", releaseIgorVersion = "", releaseDate = "", remote = ""
 	string releaseURL = "", system = "", releaseInfo = ""
-	
-	variable selStart = -1, selEnd = -1, blockStart, blockEnd, selFound
+
 	variable reqIgorVersion, releaseVersion
 	string requiredVersion = "", releaseMajor = "", releaseMinor = "", releaseExtra = ""
 	
+	string strTitleStart = "<h1 class=\"page-title\" title=\""
+	string strReleaseStart = "<div class=\"project-release-info\">"
+	string strReleaseEnd = "<div class=\"project-release-footer\">"
+	string strVersionStart = "\"field-paragraph-version\">"
+	string strDateStart = "\"field-paragraph-version-date\"><time datetime=\""
+	string strMajorStart = "\"field-paragraph-version-major\">"
+	string strPatchStart = "\"field-paragraph-version-patch\">"
+	string strExtraStart = "\"field-paragraph-version-extra\">"
+	string strLinkStart = "\"field-paragraph-file\"><span"
+	string strWindows = "<span class=\"entity-reference\">Windows"
+	string strMac = "<span class=\"entity-reference\">Mac"
+	string strNotesStart = "<span class=\"field-paragraph-full-html\">"
+			
 	// locate project name - required
-	selStart = strsearch(WebPageText, "<h1 class=\"page-title\" title=\"", blockStart, 2)
-	selStart += 30
-	selEnd = strsearch(WebPageText, "\"", selStart, 2)
-	if (selStart<30 || selEnd>(selStart+150))
+	name = GetTextField(WebPageText, strTitleStart)
+	if (ParseError(name) || strlen(name) > 200)
 		return ""
 	endif
-	name = WebPageText[selStart, selEnd-1]
-
+	
 	// find start and end of project release fields
-	selStart = strsearch(WebPageText, "<div class=\"project-release-info\">", selStart, 2)
-	if (selStart == -1)
+	// set WebPageText to the release text
+	WebPageText = GetTextField(WebPageText, strReleaseStart, strEnd = strReleaseEnd)
+	if (ParseError(name))
 		return ""
 	endif
-	blockStart = selStart
-	selEnd = strsearch(WebPageText, "<div class=\"project-release-footer\">", selStart, 2)
-	if (selEnd == -1)
-		return ""
-	endif
-	blockEnd = selEnd
 		
 	// locate version info - may be missing
-	selStart = strsearch(WebPageText, "\"field-paragraph-version\">", blockStart, 2)
-	selStart += 26
-	selEnd = strsearch(WebPageText, "<", selStart, 2)
-	if (selStart<blockStart || selEnd>blockEnd)
+	releaseIgorVersion = GetTextField(WebPageText, strVersionStart)
+	sscanf (LowerStr(releaseIgorVersion)), "igor.%f.x-%f", reqIgorVersion, releaseVersion
+	if (V_flag == 2)
+		releaseIgorVersion = num2str(reqIgorVersion)
+	else // version string doesn't have strict formatting from old IgorExchange site
 		releaseIgorVersion = "0"
-	else
-		sscanf (LowerStr(WebPageText[selStart, selEnd-1])), "igor.%f.x-%f", reqIgorVersion, releaseVersion
-		if (V_flag == 2)
-			releaseIgorVersion = num2str(reqIgorVersion)
-		else // version string doesn't have strict formatting from old IgorExchange site
-			releaseIgorVersion = "0"
-			// no way to figure out required Igor version prior to download
-		endif
+		// no way to figure out required Igor version prior to download
 	endif
-		
-	// locate version date - required
-	selStart = strsearch(WebPageText, "\"field-paragraph-version-date\">", blockStart, 2)
-	selStart += 31
-	selEnd = strsearch(WebPageText, "<", selStart, 2)
-	if (selStart<blockStart || selEnd>blockEnd)
-		return "" // failed to parse release
-	endif
-	releaseDate = ParseReleaseDate(WebPageText[selStart, selEnd-1])
-			
-	selStart = strsearch(WebPageText, "\"field-paragraph-version-major\">", blockStart, 2)
-	selStart += 32
-	selEnd = strsearch(WebPageText, "<", selStart, 2)
-	if (selStart<blockStart || selEnd>blockEnd)
-		return "" // must have major version
-	endif
-	releaseMajor = WebPageText[selStart, selEnd-1]
 	
-	// fix for error in version 3.8 of updater
-	releaseMajor = SelectString( stringmatch(releaseMajor, "400000"), releaseMajor, "4" )
-		
-	selStart = strsearch(WebPageText, "\"field-paragraph-version-patch\">", blockStart, 2)
-	selStart += 32
-	selEnd = strsearch(WebPageText, "<", selStart, 2)
-	if (selStart<blockStart || selEnd>blockEnd)
-		releaseMinor = "0" // patch not found - field may be missing
+	// locate version date
+	releaseDate = GetTextField(WebPageText, strDateStart)
+	if (!ParseError(releaseDate))
+		releaseDate = num2istr(ISO8601toJulian(releaseDate))
 	else
-		releaseMinor = WebPageText[selStart, selEnd-1]
+		releaseDate = ""
+	endif
+	
+	// Major version number is required
+	releaseMajor = GetTextField(WebPageText, strMajorStart)
+	if (ParseError(releaseMajor))
+		return ""
 	endif
 		
-	selStart = strsearch(WebPageText, "\"field-paragraph-version-extra\">", blockStart, 2)
-	selStart += 32
-	selEnd = strsearch(WebPageText, "<", selStart, 2)
-	if (selStart<blockStart || selEnd>blockEnd)
-		releaseExtra = "" // field not present for this release
-	else
-		releaseExtra = WebPageText[selStart, selEnd-1]
+	releaseMinor = GetTextField(WebPageText, strPatchStart)
+	if (ParseError(releaseMinor))
+		releaseMinor = "0" // patch not found - field may be missing
+	endif
+	
+	releaseExtra = GetTextField(WebPageText, strExtraStart)
+	if (ParseError(releaseExtra))
+		releaseExtra = ""
 	endif
 	
 	// maybe it's safer to make a preemptive number conversion
@@ -2001,46 +1955,78 @@ threadsafe function/S ParseProjectPageAsList(string projectID, string WebPageTex
 	remote = ReplaceString(":", remote, "-")
 		
 	// find download link
-	selStart = strsearch(WebPageText, "\"field-paragraph-file\"", blockStart, 2)
-	selStart = strsearch(WebPageText, "<a href=\"", selStart, 2)
-	selStart += 9
-	selEnd = strsearch(WebPageText, "\"", selStart, 2)
-	if (selEnd<0 || selEnd>blockEnd)
+	releaseURL = GetTextField(WebPageText, strLinkStart, strEnd = "</span>")
+	releaseURL = GetTextField(releaseURL, "<a href=\"")
+	if (ParseError(releaseURL))
 		return ""
 	endif
-	releaseURL = WebPageText[selStart, selEnd-1]
+	releaseURL = "https://www.wavemetrics.com" + releaseURL
 				
 	system = ""
-	selFound = strsearch(WebPageText, "<span class=\"entity-reference\">Windows</span>", blockStart, 2)
-	if (selFound>blockStart && selFound<blockEnd)
+	if (!ParseError(GetTextField(WebPageText, strWindows, strEnd = "<")))
 		system += "Windows,"
 	endif
-	selFound = strsearch(WebPageText, "<span class=\"entity-reference\">Mac-", blockStart, 2)
-	if (selFound>blockStart && selFound<blockEnd)
+	if (!ParseError(GetTextField(WebPageText, strMac, strEnd = "<")))
 		system += "Macintosh,"
 	endif
 	
-	// find release notes
-	selStart = strsearch(WebPageText, "<span class=\"field-paragraph-full-html\"", blockStart, 2)
-	selStart += 40
-	selEnd = strsearch(WebPageText, "</span>", selStart, 2)
-	if (selEnd>selStart && selEnd<blockEnd)
-		releaseInfo = removeHTMLEncoding(WebPageText[selStart, selEnd-1])
+	releaseInfo = GetTextField(WebPageText, strNotesStart, strEnd = "</span>")
+	if (ParseError(releaseInfo))
+		releaseInfo = ""
+	else
+		releaseInfo = removeHTMLEncoding(releaseInfo)
 		releaseInfo = ReplaceString("\r", releaseInfo, "")
 		releaseInfo = ReplaceString("\n", releaseInfo, "")
 		releaseInfo = ReplaceString(";", releaseInfo, "-")
 		releaseInfo = ReplaceString(":", releaseInfo, "-")
 		releaseInfo = RemoveEnding(releaseInfo, " ")
-		if (strlen(releaseInfo)>250) // set a character limit for this field
-			releaseInfo = releaseInfo[0,249] + "..."
+		if (strlen(releaseInfo)>300) // set a character limit for this field
+			releaseInfo = releaseInfo[0,299] + "..."
 		endif
 	endif
-		
+			
 	sprintf strLine, "%s;%s;%s;%s;%s;%s;%s;%s;%s;", projectID, strDate, name, remote, system, releaseDate, releaseURL, releaseIgorVersion, releaseInfo
 	if (ItemsInList(strLine) != 9)
 		return ""
 	endif
 	return strLine
+end
+
+threadsafe function ISO8601toSecs(string strISO8601)
+	variable YY, MM, DD, hour, minute, second
+	sscanf strISO8601, "%d-%d-%dT%d:%d:%g", YY, MM, DD, hour, minute, second
+	return date2secs(YY, MM, DD) + second + minute * 60 + hour * 3600
+end
+
+threadsafe function ISO8601toJulian(string strISO8601)
+	variable YY, MM, DD
+	sscanf strISO8601, "%d-%d-%dT", YY, MM, DD
+	return DateToJulian(YY, MM, DD)
+end
+
+threadsafe function ParseError(string str)
+	return cmpstr(str, "error") == 0
+end
+
+threadsafe function/S GetTextField(string strHTML, string strStart, [string strEnd])
+	if (ParamIsDefault(strEnd))
+		if (cmpstr(strStart[strlen(strStart)-1], ">") == 0)
+			strEnd = "<"
+		else
+			strEnd = "\""
+		endif
+	endif
+	int selStart, selEnd
+	selStart = strsearch(strHTML, strStart, 0, 2)
+	if (selStart < 0)
+		return "error"
+	endif
+	selStart += strlen(strStart)
+	selEnd = strsearch(strHTML, strEnd, selStart, 2)
+	if (selEnd < 0)
+		return "error"
+	endif
+	return strHTML[selStart, selEnd-1]
 end
 
 // utility function, inflates a zip archive
@@ -2393,7 +2379,7 @@ function/S MergeFolder(source, destination, [killSourceFolder, backupPathStr, te
 end
 
 // Merges folders like copyFolder on Windows
-// Files in destination folder are overwritten by more recently modified 
+// Files in destination folder are overwritten by more recently modified
 // files from source
 // Setting test=1 doesn't move anything but generates a list of files
 // that would be overwritten
@@ -2467,7 +2453,7 @@ function/S MirrorFolder(source, destination, [backupPathStr, test, ignore])
 						movedFileList = AddListItem(destFolderStr + fileName, movedfileList)
 					endif
 				else
-					if (backup) // back up any files that are to be overwritten	
+					if (backup) // back up any files that are to be overwritten
 						if (filefound && sourceMod) // file is to be overwritten
 							CopyFile/Z/O destFolderStr + fileName as backupPathStr + subPathStr + fileName
 						endif
@@ -2507,6 +2493,8 @@ function/S MirrorFolder(source, destination, [backupPathStr, test, ignore])
 end
 
 // ------------------------- Project Installer ---------------------
+
+// Install() function is deprecated.
 
 // install a user-contributed package hosted on Wavemetrics.com
 // packageList is a list of project short names.
@@ -2663,54 +2651,93 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 	backupPathStr = SelectString((prefs.options & 1), "", SpecialDirPath(ksBackupLocation,0,0,0))
 	
 	if (strlen(url) == 0)
-		// try to download 'all releases' page
-		sprintf url, "https://www.wavemetrics.com/project-releases/%s" projectID
-		if (gui)
-			SetPanelStatus("Downloading " + url)
-		endif
-		URLRequest/time=(prefs.pageTimeout)/Z url=url
-		if (V_flag)
-			sprintf cmd, "Could not load %s\r", url
-			WriteToHistory(cmd, prefs, gui)
-			return 0
-		endif
-		sprintf cmd, "Looking for releases at %s\r", url
-		WriteToHistory(cmd, prefs, 0)
 		
-		// parse page to populate w_releases
-		wave/T w_releases = ParseAllReleasesAsWave(S_serverResponse) // free text wave
-		if (DimSize(w_releases,0) == 0)
-			sprintf cmd, "Could not find packages at %s.\r", url
-			WriteToHistory(cmd, prefs, gui)
+		
+		string ReleaseKeyList = DownloadKeylistFromProjectPage(projectID, prefs.pageTimeout)
+		if (strlen(ReleaseKeyList) == 0) // download failed
+			WriteToHistory("Could not load project page", prefs, gui)
 			return 0
 		endif
 		
-		// find most recent OS- and version-compatible release
-		url = ""
-		for (i=0;i<DimSize(w_releases, 0);i+=1)
-			projectName = w_releases[i][0]
-			sscanf (w_releases[i][1])[5,Inf], "%f.x-%f", releaseIgorVersion, releaseVersion
-			if (V_flag != 2)
-				releaseIgorVersion = 0
-			endif
-			releaseExtra = w_releases[i][7]
-			releaseVersion = str2num(w_releases[i][2] + "." + w_releases[i][3])
-		
-			if (currentIgorVersion < releaseIgorVersion)
-				sprintf cmd, "%s %0.2f%s requires Igor Pro version >= %g\r", projectName, releaseVersion, releaseExtra, releaseIgorVersion
-				WriteToHistory(cmd, prefs, gui)
-			elseif (strlen(w_releases[i][5]) && FindListItem(system, w_releases[i][5]) == -1)
-				sprintf cmd, "%s %0.2f%s not available for %s\r", projectName, releaseVersion, releaseExtra, system
-				WriteToHistory(cmd, prefs, gui)
-			else
-				url = w_releases[i][4]
-				break
-			endif
-		endfor
+		// keys = "projectID;ReleaseCacheDate;name;remote;system;releaseDate;releaseURL;releaseIgorVersion;releaseInfo;"
+		projectName = StringByKey("name", ReleaseKeyList)
+		releaseIgorVersion = NumberByKey("releaseIgorVersion", ReleaseKeyList)
+		releaseVersion = NumberByKey("remote", ReleaseKeyList)
+		// shortTitle defaults to full name from web page
+		shortTitle = StringByKey("name", ReleaseKeyList)
+//		releaseExtra = StringByKey("name", ReleaseKeyList)
+
+		if (currentIgorVersion < releaseIgorVersion)
+			sprintf cmd, "%s %0.2f%s requires Igor Pro version >= %g\r", projectName, releaseVersion, releaseExtra, releaseIgorVersion
+			WriteToHistory(cmd, prefs, gui)
+		elseif (strlen(StringByKey("system", ReleaseKeyList)) && FindListItem(system, StringByKey("system", ReleaseKeyList), ",") == -1)
+			sprintf cmd, "%s %0.2f%s not available for %s\r", projectName, releaseVersion, releaseExtra, system
+			WriteToHistory(cmd, prefs, gui)
+		else
+			url = StringByKey("releaseURL", ReleaseKeyList)
+		endif
 		if (strlen(url) == 0)
 			return 0
 		endif
+
+
+
+
+		
+//		// try to download 'all releases' page
+//		sprintf url, "https://www.wavemetrics.com/project-releases/%s" projectID
+//		if (gui)
+//			SetPanelStatus("Downloading " + url)
+//		endif
+//		URLRequest/time=(prefs.pageTimeout)/Z url=url
+//		if (V_flag)
+//			sprintf cmd, "Could not load %s\r", url
+//			WriteToHistory(cmd, prefs, gui)
+//			return 0
+//		endif
+//		sprintf cmd, "Looking for releases at %s\r", url
+//		WriteToHistory(cmd, prefs, 0)
+			
+//		// parse page to populate w_releases
+//		wave/T w_releases = ParseAllReleasesAsWave(S_serverResponse) // free text wave
+//		if (DimSize(w_releases,0) == 0)
+//			sprintf cmd, "Could not find packages at %s.\r", url
+//			WriteToHistory(cmd, prefs, gui)
+//			return 0
+//		endif
+//
+//		// find most recent OS- and version-compatible release
+//		url = ""
+//		for (i=0;i<DimSize(w_releases, 0);i+=1)
+//			projectName = w_releases[i][0]
+//			sscanf (w_releases[i][1])[5,Inf], "%f.x-%f", releaseIgorVersion, releaseVersion
+//			if (V_flag != 2)
+//				releaseIgorVersion = 0
+//			endif
+//			releaseExtra = w_releases[i][7]
+//			releaseVersion = str2num(w_releases[i][2] + "." + w_releases[i][3])
+//
+//			if (currentIgorVersion < releaseIgorVersion)
+//				sprintf cmd, "%s %0.2f%s requires Igor Pro version >= %g\r", projectName, releaseVersion, releaseExtra, releaseIgorVersion
+//				WriteToHistory(cmd, prefs, gui)
+//			elseif (strlen(w_releases[i][5]) && FindListItem(system, w_releases[i][5]) == -1)
+//				sprintf cmd, "%s %0.2f%s not available for %s\r", projectName, releaseVersion, releaseExtra, system
+//				WriteToHistory(cmd, prefs, gui)
+//			else
+//				url = w_releases[i][4]
+//				break
+//			endif
+//		endfor
+//		if (strlen(url) == 0)
+//			return 0
+//		endif
+
+
 	endif
+	
+	
+	//
+	
 	
 	// create the temporary folder
 	NewPath/C/O/Q DLPathTemp, downloadPathStr; KillPath/Z DLPathTemp
@@ -3303,6 +3330,8 @@ function/S GetInstallerFilePath(string fileName)
 	return InstallerPath + fileName
 end
 
+// *** Log file ***
+
 // -------------- functions for writing to and querying install-log file ------------
 
 // File name and location are set in string constants at the top of this file.
@@ -3618,8 +3647,8 @@ end
 // examines log file to figure out whether project can be updated
 // updates are not allowed for incomplete or missing projects
 function/S GetUpdateStatus(string projectID, variable localVersion, variable remoteVersion)
-	string status = GetInstallStatus(projectID)	
-	if (cmpstr(status, "complete") == 0)	
+	string status = GetInstallStatus(projectID)
+	if (cmpstr(status, "complete") == 0)
 		if (remoteVersion > localVersion)
 			status += ", update available"
 		else
@@ -3735,8 +3764,10 @@ function/S GetInstalledFilesSummary(string projectID)
 	return RemoveEnding(filesInfo, ",")
 end
 
-// --------- functions for writing to and retrieving projects from cache file --------
 
+// *** Cache file ***
+
+// --------- functions for writing to and retrieving projects from cache file --------
 // Cache file structure:
 // Semicolon-separated list for each project, list starts with projectID,
 // terminated by carriage return.
@@ -3875,7 +3906,7 @@ function CachePutWave(wave/T ProjectsWave, int updates)
 		string S_Value = "" // workaround for Grep bug for Igor 8
 		Grep/Z/Q/LIST=""/INDX/E=s_exp CacheWave
 		wave/Z w_index
-		if (strlen(s_value)) // put the cached project in list string	
+		if (strlen(s_value)) // put the cached project in list string
 			// remove project from CacheWave
 			do
 				DeletePoints/M=0 (w_index[0]), 1, CacheWave
@@ -4039,7 +4070,9 @@ function RepairUpdater([int silently])
 	
 	STRUCT PackagePrefs prefs
 	LoadPrefs(prefs)
-
+	
+//	CacheClearAll()
+	
 	URLRequest/time=(prefs.pageTimeout)/Z url=ksGitHub
 	if (V_flag)
 		return silently ? 0 : WriteToHistory("Updater could not be repaired", prefs, 1) < -Inf
@@ -4075,7 +4108,7 @@ function RepairUpdater([int silently])
 	endif
 		
 	// It seems that requesting the file from Github with URLRequest
-	// doesn't change the eol in the updater.ipf file. 
+	// doesn't change the eol in the updater.ipf file.
 	// In contrast, in S_serverResponse the /r become /n
 	int success = ItemsInList(UpdateFile(FunctionPath(""), ksGitHub, "8197", shortTitle="Updater", localVersion=thisVersion, newVersion=GitHubVersion))
 	
@@ -4116,7 +4149,7 @@ threadsafe function GetGitHubVersion(int timeout)
 	// use commented line to override the version number in the file
 	Grep/Q/E="(?i)^// forced update ="/LIST/Z wProc
 	if (strlen(S_Value)) // s_value must be initiallized
-		return str2num(S_Value[18,inf])
+		return str2num(S_Value[18,Inf])
 	endif
 	
 	// check GitHub procedure version number
@@ -4207,10 +4240,10 @@ function MakeInstallerPanel()
 	Button btnRefresh, win=InstallerPanel, Proc=Updater#InstallerButtonProc, help={"Refresh List"}, focusRing=0
 	
 	Button btnInfo, win=InstallerPanel, pos={473,vTop+1}, size={15,15}, Proc=updater#InstallerButtonProc, title=""
-	Button btnInfo, win=InstallerPanel, help={"Show Info"}, picture=updater#pInfo
+	Button btnInfo, win=InstallerPanel, help={"Show Info"}, Picture=updater#pInfo
 	
 	Button btnSettings, win=InstallerPanel, pos={495,vTop+1}, size={15,15}, Picture=Updater#cog, labelBack=0, title=""
-	Button btnSettings, win=InstallerPanel, Proc=Updater#InstallerButtonProc, help={"Change Settings"}, focusRing=0
+	Button btnSettings, win=InstallerPanel, Proc=Updater#InstallerButtonProc, help={"Settings Menu"}, focusRing=0
 	
 	vTop += 10
 	TabControl tabs, win=InstallerPanel, pos={-10,vTop}, size={540,280}, tabLabel(0)="Projects", focusRing=0
@@ -4261,7 +4294,7 @@ function MakeInstallerPanel()
 		
 	DoUpdate/W=InstallerPanel
 	SetWindow InstallerPanel userdata(version) = num2str(GetThisVersion())
-	SetWindow InstallerPanel hook(hInstallerHook)=updater#fHook	
+	SetWindow InstallerPanel hook(hInstallerHook)=updater#fHook
 	
 	SetActiveSubwindow InstallerPanel
 
@@ -4341,6 +4374,7 @@ function MakeInstallerPanel()
 	endif
 end
 
+
 // get a list of user contributed projects from Wavemetrics.com
 // if we already have an up-to-date list loaded in ProjectsFullList, do nothing
 // load projects from cache into ProjectsFullList
@@ -4353,212 +4387,100 @@ function ReloadProjectsList([int forced])
 	
 	forced = ParamIsDefault(forced) ? 0 : forced
 	
+	#ifdef debug
+	forced = 1
+	#endif	
+	
 	DFREF dfr = root:Packages:Installer
 	wave/T/SDFR=dfr ProjectsFullList, ProjectsDisplayList
 	
 	variable lastmod = NumberByKey("MODTIME", WaveInfo(ProjectsFullList,0))
-	variable oneDay = 86400, oneWeek = 86400*7, startPage = 0, pnt = 0, pnt2 = 0
+	variable oneDay = 86400, pnt = 0
 	
-	if (forced==0 && ((datetime-lastmod) < oneDay) && (DimSize(ProjectsFullList, 0) >= kNumProjects)) // less than 1 day old
+	if (forced==0 && ((datetime-lastmod) < oneDay) && (DimSize(ProjectsFullList, 0) >= kNumProjects))
 		// looks like we already have an up-to-date list of projects
 		return 0
 	endif
 	
-	// clear any incomplete or old list
-	Redimension/N=(0,-1) ProjectsFullList
-	
-	// load projects from cache
-	string filePath = GetInstallerFilePath(ksCacheFile)
-	Make/T/N=0/free w
-	if (isFile(filePath))
-		Grep/O/Z/ENCG=1/E=";" filePath as w // load cache without header
+	// load projects from cache and check that cached list is reasonably recent
+	variable CacheTime = LoadProjectsListFromCache()
+	if (forced<2 && CacheTime>(datetime-oneDay))
+		return 0
 	endif
 	
-	int i
-	int numProjects = DimSize(w, 0)
-	
-	// check that cached list is reasonably recent
-	Make/free/N=(numProjects) cacheTime
-	if (numProjects)
-		cacheTime = str2num(StringFromList(1, w[p]))
-	endif
-	
-	// stale projects in cache will force a new download
-	if (forced<2 && numProjects>=kNumProjects && WaveMin(cacheTime)>(datetime-oneWeek) ) // we have a fairly complete list
-		Redimension/N=(numProjects, -1) ProjectsFullList
-		ProjectsFullList[][0,6] = StringFromList(q+(q>0), w[p]) // skip second item in list (cache time)
-	else
-		numProjects = 0 // start over by downloading complete list
-	endif
-	
-	// now grab projects more recent than those in cache
-	// keep a list of new downloads to add to cache
-	Make/T/free/N=(0) toCache
-	
-	string baseURL, projectsURL, URL
-	baseURL = "https://www.wavemetrics.com"
-	projectsURL = "/projects?os_compatibility=All&project_type=All&field_supported_version_target_id=All&page="
-	int pageNum, success
-	
-	int pStart, pEnd, selStart, selEnd = 0, err
-	string strAuthor, strName, ShortTitle, strProjectURL, strUserNum, strProjectNum
+	int i, pStart, pEnd, selStart, selEnd
 	string cmd = "", strLine=""
 	string strDate = num2istr(datetime)
 	
 	STRUCT PackagePrefs prefs
 	LoadPrefs(prefs)
 	
-	int done = 0
-	
 	CtrlNamedBackground animation, period=30, Proc=AnimateButton
 	CtrlNamedBackground animation, start
 	
-	// loop through listPages
-	for (pageNum=0;pageNum<100;pageNum+=1)
+	string url = "https://www.wavemetrics.com/projects"
+	URLRequest/time=(prefs.pageTimeout)/Z url=url
+	if (V_flag)
+		sprintf cmd, "Installer could not load %s\r", url
+		WriteToHistory(cmd, prefs, 0)
+		SetPanelStatus("Download failed")
+		CtrlNamedBackground animation, stop
+		return 0
+	endif
+	
+	selStart = strsearch(S_serverResponse, "title=\"Go to last page\"", 0, 2)
+	selStart = strsearch(S_serverResponse, "<a href=\"?page=", selStart, 3)
+	selStart += strlen("<a href=\"?page=")
+	selEnd = strsearch(S_serverResponse, "\"", selStart, 2)
+	variable numPages = str2num(S_serverResponse[selStart, selEnd-1]) + 1
+	if (numtype(numPages))
+		SetPanelStatus("Download failed")
+		CtrlNamedBackground animation, stop
+		return 0
+	endif
 		
-		SetPanelStatus("Downloading page " + num2str(pageNum + 1) + "...")
-		sprintf URL "%s%s%d", baseURL, projectsURL, pageNum
-		
-		URLRequest/time=(prefs.pageTimeout)/Z url=url
-		if (V_flag)
-			sprintf cmd, "Installer could not load %s\r", url
-			WriteToHistory(cmd, prefs, 0)
-			UpdateListboxWave("") // update based on anything we managed to download
-			SetPanelStatus("List may be incomplete")
-			CtrlNamedBackground animation, stop
-			return 0
-		endif
-			
-		pStart = strsearch(S_serverResponse, "<section class=\"project-teaser-wrapper\">", 0, 2)
-		if (pStart == -1)
-			break // no more projects
-		endif
-		pEnd = 0
-		
-		// loop through projects on listPage
-		for (i=0;i<50;i++)
-			pStart = strsearch(S_serverResponse, "<section class=\"project-teaser-wrapper\">", pEnd, 2)
-			pEnd = strsearch(S_serverResponse, "<div class=\"project-teaser-footer\">", pStart, 2)
-			if (pEnd==-1 || pStart==-1)
-				break // no more projects on this listPage
-			endif
-			
-			// search backwards from end of project (pEnd)
-			selStart = strsearch(S_serverResponse, "<a class=\"user-profile-compact-wrapper\" href=\"/user/", pEnd, 3)
-			if (selStart < pStart)
-				continue
-			endif
-			
-			// now we have valid pStart, pEnd, and selStart
-			
-			selStart += 52
-			selEnd = strsearch(S_serverResponse, "\">", selStart, 0)
-			if (limit(selEnd, pStart, pEnd) != selEnd)
-				continue
-			endif
-			strUserNum = S_serverResponse[selStart,selEnd-1]
-
-			selStart = strsearch(S_serverResponse, "<span class=\"username-wrapper\">", selEnd, 2)
-			selStart += 31
-			selEnd = strsearch(S_serverResponse, "</span>", selStart, 2)
-			if (limit(selEnd, pStart, pEnd) != selEnd)
-				continue
-			endif
-			strAuthor = S_serverResponse[selStart,selEnd-1]
-					
-			selStart = strsearch(S_serverResponse, "<a href=\"", selEnd, 2)
-			selStart += 9
-			selEnd = strsearch(S_serverResponse, "\"><h2>", selStart, 2)
-			if (limit(selEnd, pStart, pEnd) != selEnd)
-				continue
-			endif
-			strProjectURL = baseURL + S_serverResponse[selStart,selEnd-1]
-			
-			selStart = selEnd + 6
-			selEnd = strsearch(S_serverResponse, "</h2></a>", selStart, 2)
-			if (limit(selEnd, pStart, pEnd) != selEnd)
-				continue
-			endif
-			strName = S_serverResponse[selStart,selEnd-1]
-			
-			// we have found all the expected fields
-			
-			if (strlen(strName) == 0)
-				continue
-			endif
-			
-			// clean up project names that contain certain encoded characters
-			strName = RemoveHTMLEncoding(strName)
-
-// Don't try to get project details at this point: too many pages to download
-			
-			string projectID = ParseFilePath(0, strProjectURL, "/", 1, 0)
-			if (strlen(projectID) == 0)
-				continue
-			endif
-			
-			FindValue/TEXT=projectID/TXOP=2/RMD=[][0,0] ProjectsFullList
-			if (V_Value > 0) // we already have this one in cache
-				done = 1
-				break
-			endif
-			
-			// Add project to ProjectsFullList wave
-			pnt = DimSize(ProjectsFullList, 0)
-			InsertPoints/M=0 pnt, 1, ProjectsFullList
-			ProjectsFullList[pnt][%projectID] = ParseFilePath(0, strProjectURL, "/", 1, 0)
-			ProjectsFullList[pnt][%name] = strName
-			ProjectsFullList[pnt][%author] = strAuthor
-			ProjectsFullList[pnt][%userNum] = strUserNum
-			// search for other non-essential parameters
-			
-			// project types
-			selEnd = pStart
-			do
-				selStart = strsearch(S_serverResponse, "/taxonomy/", selEnd, 2)
-				selStart = strsearch(S_serverResponse, ">", selStart, 0)
-				selEnd = strsearch(S_serverResponse, "<", selStart, 0)
-				if (selStart<pStart || selEnd>pEnd || selEnd<1 )
-					break
-				endif
-				ProjectsFullList[pnt][%type] += S_serverResponse[selStart+1,selEnd-1] + ";"
-			while (1)
-			
-			// date
-			selStart = strsearch(S_serverResponse, "<span>", pEnd, 2)
-			selEnd = strsearch(S_serverResponse, "</span>", pEnd, 2)
-			if (selStart>0 && selEnd>0 && selEnd < (pEnd + 80))
-				ProjectsFullList[pnt][%published] = ParsePublishDate(S_serverResponse[selStart+6,selEnd-1])
-			endif
-			
-			// views
-			selEnd = strsearch(S_serverResponse, " views</span>", pEnd, 2)
-			selStart = strsearch(S_serverResponse, "<span>", selEnd, 3)
-			if (selStart>pEnd && selEnd < (pEnd+150) )
-				ProjectsFullList[pnt][%views] = S_serverResponse[selStart+6,selEnd-1]
-			endif
-
-			// store the new values to add to cache file
-			//	format is projectID;ProjectCacheDate;title;author;published;views;type;userNum;
-			wave/T w = ProjectsFullList
-			sprintf strLine, "%s;%s;%s;%s;%s;%s;%s;%s;" w[pnt][%projectID], strDate, w[pnt][%name], w[pnt][%author], w[pnt][%published], w[pnt][%views], ReplaceString(";", w[pnt][%type], ","), w[pnt][%userNum]
-			if (ItemsInList(strLine) == 8)
-				toCache[numpnts(toCache)] = {strLine}
-			endif
-			
-		endfor	 // next project
-		
-		ResortWaves(0, 0)
-		UpdateListboxWave("") // rebuild display list as each page is downloaded
-		DoUpdate
-		if (done)
+	Make/free/wave/N=(numPages) wwPages	
+	multithread wwPages = ParseProjectsPageAsWave(p, prefs.pageTimeout)
+	int numNew
+	
+	// clear any incomplete or old list
+	Redimension/N=(0,-1) ProjectsFullList
+	
+	for(i=0;i<numPages;i++)
+		wave/T w = wwPages[i]
+		if (!WaveExists(w))
 			break
 		endif
-	endfor	 // next page
+		numNew = DimSize(w, 0)
+		if (!numNew)
+			break
+		endif
+
+		pnt = DimSize(ProjectsFullList, 0)
+		InsertPoints/M=0 pnt, numNew, ProjectsFullList
+		ProjectsFullList[pnt,Inf][] = w[p-pnt][q]
+	endfor
 	
-	// cache any newly added projects
-	if (numpnts(toCache)) // we have added new projects
+	#ifdef debug
+	Print "downloaded list of " + num2str(DimSize(ProjectsFullList, 0)) + " projects"
+	#endif
+		
+	ResortWaves(0, 0)
+	
+	wave/T w = ProjectsFullList
+	if (DimSize(w, 0))
+		Make/free/T/N=(DimSize(w, 0)) toCache
+		toCache = w[p][%projectID] + ";"
+		toCache += strDate + ";"
+		toCache += w[p][%name] + ";"
+		toCache += w[p][%author] + ";"
+		toCache += w[p][%published] + ";"
+		toCache += w[p][%views] + ";"
+		toCache += ReplaceString(";", w[p][%type], ",") + ";"
+		toCache += w[p][%userNum] + ";"
 		CachePutWave(toCache, 0)
+	else
+		LoadProjectsListFromCache()
 	endif
 	
 	CtrlNamedBackground animation, stop
@@ -4566,194 +4488,144 @@ function ReloadProjectsList([int forced])
 	return 1
 end
 
-// for testing
-function ReloadProject(string projectID)
+function LoadProjectsListFromCache()
 	
 	DFREF dfr = root:Packages:Installer
-	wave/T/SDFR=dfr ProjectsFullList, ProjectsDisplayList
+	wave/T/SDFR=dfr ProjectsFullList
 	
-
-	// ParseProjectPageAsList(string projectID, string WebPageText)
+	variable OldestCacheDate = 0
+	string filePath = GetInstallerFilePath(ksCacheFile)
 	
-	// now grab projects more recent than those in cache
-	// keep a list of new downloads to add to cache
-	Make/T/free/N=(0) toCache
+	Make/T/N=0/free w
+	Grep/O/Z/ENCG=1/E=";" filePath as w // load cache without header
+	int numLines = numpnts(w)
 	
-	int i, pnt
-	
-	string baseURL, projectsURL, URL
-	baseURL = "https://www.wavemetrics.com"
-	projectsURL = "/projects?os_compatibility=All&project_type=All&field_supported_version_target_id=All&page="
-	int pageNum, success
-	
-	int pStart, pEnd, selStart, selEnd = 0, err
-	string strAuthor, strName, ShortTitle, strProjectURL, strUserNum, strProjectNum
-	string cmd = "", strLine=""
-	string strDate = num2istr(datetime)
-	
-	STRUCT PackagePrefs prefs
-	LoadPrefs(prefs)
-	
-	int done = 0
-	
-	// loop through listPages
-	for (pageNum=0;pageNum<100;pageNum+=1)
-		
-		SetPanelStatus("Downloading page " + num2str(pageNum + 1) + "...")
-		sprintf URL "%s%s%d", baseURL, projectsURL, pageNum
-		
-		URLRequest/time=(prefs.pageTimeout)/Z url=url
-		if (V_flag)
-			sprintf cmd, "Installer could not load %s\r", url
-			WriteToHistory(cmd, prefs, 0)
-			UpdateListboxWave("") // update based on anything we managed to download
-			SetPanelStatus("List may be incomplete")
-			return 0
-		endif
-			
-		pStart = strsearch(S_serverResponse, "<section class=\"project-teaser-wrapper\">", 0, 2)
-		if (pStart == -1)
-			break // no more projects
-		endif
-		pEnd = 0
-		
-		int pos = strsearch(S_serverResponse, "\"/node/"+projectID+"\"", 0)
-		if (pos<0)
-			continue
-		endif
-		
-		
-		pStart = strsearch(S_serverResponse, "<section class=\"project-teaser-wrapper\">", pos, 3)
-		pEnd = strsearch(S_serverResponse, "<div class=\"project-teaser-footer\">", pStart, 2)
-		if (pEnd==-1 || pStart==-1)
-			return 0
-		endif
-
-		// search backwards from end of project (pEnd)
-		selStart = strsearch(S_serverResponse, "<a class=\"user-profile-compact-wrapper\" href=\"/user/", pEnd, 3)
-		if (selStart < pStart)
-			return 0
-		endif
-
-		// now we have valid pStart, pEnd, and selStart
-
-		selStart += 52
-		selEnd = strsearch(S_serverResponse, "\">", selStart, 0)
-		if (limit(selEnd, pStart, pEnd) != selEnd)
-			continue
-		endif
-		strUserNum = S_serverResponse[selStart,selEnd-1]
-
-		selStart = strsearch(S_serverResponse, "<span class=\"username-wrapper\">", selEnd, 2)
-		selStart += 31
-		selEnd = strsearch(S_serverResponse, "</span>", selStart, 2)
-		if (limit(selEnd, pStart, pEnd) != selEnd)
-			continue
-		endif
-		strAuthor = S_serverResponse[selStart,selEnd-1]
-
-		selStart = strsearch(S_serverResponse, "<a href=\"", selEnd, 2)
-		selStart += 9
-		selEnd = strsearch(S_serverResponse, "\"><h2>", selStart, 2)
-		if (limit(selEnd, pStart, pEnd) != selEnd)
-			continue
-		endif
-		strProjectURL = baseURL + S_serverResponse[selStart,selEnd-1]
-
-		selStart = selEnd + 6
-		selEnd = strsearch(S_serverResponse, "</h2></a>", selStart, 2)
-		if (limit(selEnd, pStart, pEnd) != selEnd)
-			continue
-		endif
-		strName = S_serverResponse[selStart,selEnd-1]
-
-		// we have found all the expected fields
-
-		if (strlen(strName) == 0)
-			return 0
-		endif
-
-		// clean up project names that contain certain encoded characters
-		strName = RemoveHTMLEncoding(strName)
-
-
-		FindValue/TEXT=projectID/TXOP=2/RMD=[][0,0] ProjectsFullList
-		if (V_Value > 0) // we already have this one in cache
-			pnt = v_row
-		else
-			// Add project to ProjectsFullList wave
-			pnt = DimSize(ProjectsFullList, 0)
-			InsertPoints/M=0 pnt, 1, ProjectsFullList
-		endif
-
-
-		ProjectsFullList[pnt][%projectID] = ParseFilePath(0, strProjectURL, "/", 1, 0)
-		ProjectsFullList[pnt][%name] = strName
-		ProjectsFullList[pnt][%author] = strAuthor
-		ProjectsFullList[pnt][%userNum] = strUserNum
-		// search for other non-essential parameters
-
-		// project types
-		selEnd = pStart
-		do
-			selStart = strsearch(S_serverResponse, "/taxonomy/", selEnd, 2)
-			selStart = strsearch(S_serverResponse, ">", selStart, 0)
-			selEnd = strsearch(S_serverResponse, "<", selStart, 0)
-			if (selStart<pStart || selEnd>pEnd || selEnd<1 )
-				break
-			endif
-			ProjectsFullList[pnt][%type] += S_serverResponse[selStart+1,selEnd-1] + ";"
-		while (1)
-
-		// date
-		selStart = strsearch(S_serverResponse, "<span>", pEnd, 2)
-		selEnd = strsearch(S_serverResponse, "</span>", pEnd, 2)
-		if (selStart>0 && selEnd>0 && selEnd < (pEnd + 80))
-			ProjectsFullList[pnt][%published] = ParsePublishDate(S_serverResponse[selStart+6,selEnd-1])
-		endif
-
-		// views
-		selEnd = strsearch(S_serverResponse, " views</span>", pEnd, 2)
-		selStart = strsearch(S_serverResponse, "<span>", selEnd, 3)
-		if (selStart>pEnd && selEnd < (pEnd+150) )
-			ProjectsFullList[pnt][%views] = S_serverResponse[selStart+6,selEnd-1]
-		endif
-
-		// store the new values to add to cache file
-		//	format is projectID;ProjectCacheDate;title;author;published;views;type;userNum;
-		wave/T w = ProjectsFullList // let's use a waveref with a shorter name
-		sprintf strLine, "%s;%s;%s;%s;%s;%s;%s;%s;" w[pnt][%projectID], strDate, w[pnt][%name], w[pnt][%author], w[pnt][%published], w[pnt][%views], ReplaceString(";", w[pnt][%type], ","), w[pnt][%userNum]
-		if (ItemsInList(strLine) == 8)
-			toCache[numpnts(toCache)] = {strLine}
-		endif
-	
+	if (numLines)
+		Redimension/N=(DimSize(w, 0),-1) ProjectsFullList
+		ProjectsFullList[][%projectID] = StringFromList(0, w[p])
+		ProjectsFullList[][%name]      = StringFromList(2, w[p])
+		ProjectsFullList[][%author]    = StringFromList(3, w[p])
+		ProjectsFullList[][%published] = StringFromList(4, w[p])
+		ProjectsFullList[][%views]     = StringFromList(5, w[p])
+		ProjectsFullList[][%type]      = ReplaceString(",", StringFromList(6, w[p]), ";")
+		ProjectsFullList[][%userNum]   = StringFromList(7, w[p])
+		Make/free/N=(numpnts(w)) CacheDates
+		CacheDates = str2num(StringFromList(1, w[p]))
+		OldestCacheDate = (numLines < kNumProjects) ? 0 : WaveMin(CacheDates)
 		ResortWaves(0, 0)
-		UpdateListboxWave("") // rebuild display list as each page is downloaded
-		DoUpdate
-
-		break
-
-	endfor	 // next page
-	
-	// cache any newly added projects
-	if (numpnts(toCache)) // we have added new projects
-		CachePutWave(toCache, 0)
 	endif
 	
-	SetPanelStatus("")
-	return 1
+	#ifdef debug
+	printf "loaded %d projects from cache into ProjectsFullList", numpnts(w)
+	#endif
+	
+	return OldestCacheDate
+end
+
+
+// Parse html in WebPageText to find releases.
+threadsafe function/WAVE ParseProjectsPageAsWave(variable pageNum, variable timeout)
+	
+	Make/T/Free/N=(0,10) w_projects
+	string dimLabelsList = "projectID;name;author;published;views;type;userNum;;;;"
+	SetDimLabels(dimLabelsList, 1, w_projects)
+			
+	string baseURL, projectsURL, URL
+	string WebPageText = ""
+	baseURL = "https://www.wavemetrics.com"
+	projectsURL = "/projects?os_compatibility=All&project_type=All&field_supported_version_target_id=All&page="
+	sprintf URL "%s%s%d", baseURL, projectsURL, pageNum
+	URLRequest/time=(timeout)/Z url=url
+	if (V_flag)
+		return w_projects
+	endif
+	
+	int i, pnt
+	int pStart, pEnd, selStart, selEnd
+	string strAuthor, strName, strProjectURLfield, strUserNum, strProjectNum, strURL
+	string projectID, strFooter, strPubDate, strViews, strTypes
+	string cmd = ""
+	string strDate = num2istr(datetime)
+	
+
+	string strProjectStart = "class=\"project-teaser-wrapper\""
+	string strProjectEnd = "class=\"project-teaser-footer\"" // need to find the </div> that follows this
+	string strUserStart = "class=\"user-profile-compact-wrapper\" href=\"/user/"
+	string strAuthorStart = "class=\"username-wrapper\">"
+	string strURLstart = "class=\"project-teaser-info\""
+	string strTaxonomyStart = "<a href=\"/taxonomy/"
+	string strFooterStart = "<div class=\"project-teaser-footer\">"
+	
+	string strProjectText
+		
+	pEnd = 0
+	// loop through projects on listPage
+	for (i=0;i<50;i++)
+		pStart = strsearch(S_serverResponse, strProjectStart, pEnd, 2)
+		pEnd = strsearch(S_serverResponse, strProjectEnd, pStart, 2)
+		if (pEnd==-1 || pStart==-1)
+			break // no more projects on this listPage
+		endif
+		pEnd = strsearch(S_serverResponse, "</div>", pEnd, 2)
+		strProjectText = S_serverResponse[pStart, pEnd+6]
+		
+		strUserNum = GetTextField(strProjectText, strUserStart, strEnd="\">")
+		strAuthor = GetTextField(strProjectText, strAuthorStart, strEnd="</span>")
+		strProjectURLfield = GetTextField(strProjectText, strURLstart, strEnd="</a>")
+		strURL = GetTextField(strProjectURLfield, "href=\"")
+		strName = GetTextField(strProjectURLfield, "<h2>", strEnd="</h2>")
+		if (ParseError(strUserNum) || ParseError(strAuthor) || ParseError(strURL) || ParseError(strName))
+			continue
+		endif
+		strURL = baseURL + strURL
+		strName = RemoveHTMLEncoding(strName)
+		projectID = ParseFilePath(0, strURL, "/", 1, 0)
+		if (strlen(projectID) == 0)
+			continue
+		endif
+		
+		selEnd = 0
+		strTypes = ""
+		do
+			selStart = strsearch(strProjectText, "/taxonomy/", selEnd, 2)
+			if (selStart < 0)
+				break
+			endif
+			selStart = strsearch(strProjectText, ">", selStart, 0)
+			selEnd = strsearch(strProjectText, "<", selStart, 0)
+			if (selStart<0 || selEnd<0)
+				break
+			endif
+			strTypes += strProjectText[selStart+1,selEnd-1] + ";"
+		while (1)
+		
+		strFooter = GetTextField(strProjectText, strFooterStart, strEnd="</div>")
+		strPubDate = GetTextField(strFooter, "<span>")
+		strPubDate = SelectString(ParseError(strPubDate), ParsePublishDate(strPubDate), "")
+		strFooter = GetTextField(strFooter, "</span>", strEnd="/span>")
+		strViews = GetTextField(strFooter, "<span>", strEnd=" views<")
+		strViews = SelectString(ParseError(strViews), strViews, GetTextField(strFooter, "<span>", strEnd=" view<"))
+		strViews = SelectString(ParseError(strViews), strViews, "")
+		
+		w_projects[DimSize(w_projects, 0)][] = {{projectID},{strName},{strAuthor},{strPubDate},{strViews},{strTypes},{strUserNum},{""},{""},{""}}
+	endfor	 // next project
+
+	return w_projects
 end
 
 
 // returns a stringlist of projects found in user procedures folder
 function/S UserProcsProjectsList()
+
 	wave/T w = GetProcsRecursive(1)
+	
 	if (numpnts(w))
-		w = GetProjectIDString(w)
+		multithread w = GetProjectIDString(w)
 	endif
 	string list = ""
 	TextWaveZapString(w, "")
 	wfprintf list, "%s;", w
+	
 	return list
 end
 
@@ -4763,8 +4635,8 @@ function/wave UserProcsProjectsWave()
 	int numRows = numpnts(wFiles)
 	Make/free/N=(numRows, 2) w
 	if (numRows)
-		w[][0] = GetConstantFromFile("kProjectID", wFiles[p])
-		w[][1] = numtype(w[p][0])==0 ? GetProcVersion(wFiles[p]) : 0
+		multithread w[][0] = GetConstantFromFile("kProjectID", wFiles[p])
+		multithread w[][1] = numtype(w[p][0])==0 ? GetProcVersion(wFiles[p]) : 0
 		int i
 		for (i=DimSize(w, 0)-1;i>=0;i-=1)
 			if (numtype(w[i][0]) == 2)
@@ -4785,8 +4657,9 @@ function/wave ExperimentProcsProjectsWave()
 	int numRows = numpnts(wFiles)
 	Make/free/N=(numRows, 2) w
 	if (numRows)
-		w[][0] = GetConstantFromFile("kProjectID", wFiles[p])
-		w[][1] = numtype(w[p][0])==0 ? GetProcVersion(wFiles[p]) : 0
+		multithread w[][0] = GetConstantFromFile("kProjectID", wFiles[p])
+		multithread w[][1] = numtype(w[p][0])==0 ? GetProcVersion(wFiles[p]) : 0
+		
 		int i
 		for (i=DimSize(w, 0)-1;i>=0;i-=1)
 			if (numtype(w[i][0]) == 2)
@@ -4812,6 +4685,7 @@ function/wave ProjectWave(string projectID)
 end
 
 // forced : bit 0 = reload local, bit 1 = reload remote
+// if forced = 0 local file versions and install status are rechecked
 function ReloadUpdatesList(int forced, int gui, [string pid])
 	// gui = 1 for installer panel
 	
@@ -4821,11 +4695,17 @@ function ReloadUpdatesList(int forced, int gui, [string pid])
 	wave/T UpdatesFullList = dfr:UpdatesFullList
 	ResetColumnLabels()
 	
+	SetPanelStatus("Checking local files")
+	
 	STRUCT PackagePrefs prefs
 	LoadPrefs(prefs)
 	
-	variable lastmod = NumberByKey("MODTIME", WaveInfo(UpdatesFullList,0))
-	variable oneDay = 86400, oneWeek = 604800
+	#ifdef debug
+	forced = 3
+	#endif
+	
+	variable lastmod = NumberByKey("MODTIME", WaveInfo(UpdatesFullList, 0))
+	variable oneDay = 86400, oneWeek = 604800, OneDayAgo = datetime - oneDay
 	int checkFilesInUserProcsFolder = 0, checkFilesInExperiment = 0, checkInstalled = 1
 	
 	if (gui == 1)
@@ -4834,7 +4714,7 @@ function ReloadUpdatesList(int forced, int gui, [string pid])
 		checkFilesInUserProcsFolder = (V_Value == 2)
 		checkFilesInExperiment = (V_Value == 3)
 	endif
-	
+		
 	if (forced==0 && ((datetime-lastmod) < oneDay) && (DimSize(UpdatesFullList, 0)>0) && (DimSize(UpdatesFullList, 1)==15)) // less than 1 day old
 		// looks like we already have a recent list of projects
 		// update local info only, we only arrive here if installer panel is open
@@ -4844,29 +4724,24 @@ function ReloadUpdatesList(int forced, int gui, [string pid])
 			UpdatesFullList[][%status] = GetUpdateStatus(UpdatesFullList[p][%projectID], str2num(UpdatesFullList[p][%local]), str2num(UpdatesFullList[p][%remote]))
 			UpdatesFullList[][%LastUpdate] = StringFromList(6, LogGetProject(UpdatesFullList[p][%projectID]))
 		else
-			UpdatesFullList[][%local] = GetPragmaString("version", UpdatesFullList[p][%installPath])
+			multithread UpdatesFullList[][%local] = GetPragmaString("version", UpdatesFullList[p][%installPath])
 			// maybe a file has been updated
 			UpdatesFullList[][%status] = SelectString(str2num(UpdatesFullList[p][%local])>=str2num(UpdatesFullList[p][%remote]), UpdatesFullList[p][%status], "up to date")
 			UpdatesFullList[][%lastUpdate] = num2istr(GetFileCreationDate(UpdatesFullList[p][%installPath]))
-			resortWaves(1, 0)
+			ResortWaves(1, 0)
 		endif
 		
 		return 0
 	endif
 	
-	int i, j
-	string procList = "", cmd = "", strExitStatus = ""
-	string keyList, projectID, strRemVer, strLocVer
 	string filePath = ""
-	string lastUpdate = ""
-	string shortTitle, url, releaseURL, projectName, strDate, fileStatus
-	string strSystem = "", filesInfo = "", installDate = "", logEntry = ""
-	variable CacheDate, localVersion, releaseVersion, releaseMajor, releaseMinor, releaseIgorVersion
 	variable currentIgorVersion = GetIgorVersion()
+	int i, numProjects, numDownloads
+	string UserFilesPath = SpecialDirPath("Igor Pro User Files", 0, 0, 0)
 	
 	// clear any incomplete or old list
 	if (ParamIsDefault(pid))
-		Redimension/N=(0,-1) UpdatesFullList
+//		Redimension/N=(0,-1) UpdatesFullList
 	else
 		FindValue/Z/TEXT=pid/TXOP=2/RMD=[][0,0] UpdatesFullList
 		if (v_value >- 1)
@@ -4880,6 +4755,7 @@ function ReloadUpdatesList(int forced, int gui, [string pid])
 		if (checkInstalled)
 			wave/T w = ListToTextWave(ListOfProjectsFromInstallLog(),";")
 		else
+			
 			if (checkFilesInUserProcsFolder)
 				wave/T w = GetProcsRecursive(1)
 			elseif (checkFilesInExperiment) // check only open files
@@ -4887,6 +4763,7 @@ function ReloadUpdatesList(int forced, int gui, [string pid])
 				w = GetProcWinFilePath(w)
 				TextWaveZapString(w, "")
 			endif
+			
 			// remove this procedure from the list
 			TextWaveZapString(w, FunctionPath(""))
 			
@@ -4902,167 +4779,121 @@ function ReloadUpdatesList(int forced, int gui, [string pid])
 		endif
 	endif
 	
-//	if (ParamIsDefault(pid) == 0)
-//		Make/free/T w = {pid}
-//		checkInstalled = 1
-//	elseif (checkInstalled)
-//		wave/T w = ListToTextWave(ListOfProjectsFromInstallLog(),";")
-//	else
-//		if (checkFilesInUserProcsFolder)
-//			wave/T w = GetProcsRecursive(1)
-//		elseif (checkFilesInExperiment) // check only open files
-//			wave/T w = ListToTextWave(WinList("*",";","INDEPENDENTMODULE:1,INCLUDE:3"),";")
-//			w = GetProcWinFilePath(w)
-//			TextWaveZapString(w, "")
-//		endif
-//		// remove this procedure from the list
-//		TextWaveZapString(w, FunctionPath(""))
-//		
-//		// add this file to start of list
-//		InsertPoints 0, 1, w
-//		w[0] = FunctionPath("")
-//	endif
+	numProjects = DimSize(w, 0)
+	Make/free/T/N=(numProjects,DimSize(UpdatesFullList,1)) wNew
 	
-	int numProjects = DimSize(w,0)
-	for (i=0;i<numProjects;i+=1)
+	string dimLabelsList = "projectID;name;status;local;remote;system;releaseDate;installPath;"
+	dimLabelsList += "releaseURL;releaseIgorVersion;installDate;filesInfo;releaseInfo;lastUpdate;;"
+	SetDimLabels(dimLabelsList, 1, wNew)
+	
+	if (numProjects == 0)
+		// shouldn't happen
+		return 0
+	endif
+	
+	if (checkInstalled)
+		Make/free/T/N=(numProjects) wLogEntries
+		wLogEntries = LogGetProject(w[p])
+		if (DimSize(wNew, 0))
+			wNew[][%projectID]          = StringFromList(0, wLogEntries[p])
+			wNew[][%name]               = StringFromList(1, wLogEntries[p])
+			wNew[][%status]             = GetInstallStatus(w[p])
+			wNew[][%local]              = StringFromList(2, wLogEntries[p])
+			wNew[][%installPath]        = StringFromList(4, wLogEntries[p]) // full path to install folder or to ipf
+			wNew[][%installPath]        = SelectString(strlen(wNew)>0, "", SpecialDirPath(wNew,0,0,0))
+			wNew[][%installPath]       += StringFromList(5, wLogEntries[p]) // path to install location
+			wNew[][%releaseIgorVersion] = ""
+			wNew[][%installDate]        = StringFromList(3, wLogEntries[p])
+			wNew[][%filesInfo]          = GetInstalledFilesSummary(w[p])
+			wNew[][%lastUpdate]         = StringFromList(6, wLogEntries[p])
+		endif
+	else
 		
-		// first check status of local file
+		multithread wNew[][%releaseURL] = GetUpdateURLfromFile(w[p])
+		wNew[][%projectID]              = ParseFilePath(0, wNew[p][%releaseURL], "/", 1, 0)
 		
-		if (checkInstalled) // w[i] contains projectID
-			logEntry = LogGetProject(w[i])
-			if (strlen(logEntry) == 0)
-				continue
+		for(i=DimSize(wNew, 0)-1;i>=0;i--)
+			if (strlen(wNew[i][%projectID]) == 0)
+				DeletePoints/M=0 i, 1, wNew, w
+				numProjects -= 1
 			endif
-			
-			// fill UpdatesFullList
-			projectID = StringFromList(0, logEntry)
-			shortTitle = StringFromList(1, logEntry)
-			strLocVer = StringFromList(2, logEntry)
-			installDate = StringFromList(3, logEntry)
-			filePath = StringFromList(4, logEntry)
-			if (strlen(filePath))
-				filePath = SpecialDirPath(filePath,0,0,0)
-			endif
-			filePath += StringFromList(5, logEntry) // path to install location
-			lastUpdate = StringFromList(6, logEntry)
-			fileStatus = GetInstallStatus(projectID)
-			url = "https://www.wavemetrics.com/node/" + projectID
-			localVersion = str2num(strLocVer)
-			filesInfo = GetInstalledFilesSummary(projectID)
-		else // w[i] contains filePath
-			filePath = w[i]
-			
-			GetFileFolderInfo/Q/Z filePath
-			if (V_isFile == 0)
-				continue
-			endif
-			
-			lastUpdate = num2istr(V_modificationDate)
-			
-			// skip any file that doesn't have kProjectID set
-			// we don't try to guess URL because download failures will slow the indexing too much
-			url = GetUpdateURLfromFile(filePath)
-			if (strlen(url) == 0)
-				continue
-			endif
-			projectID = ParseFilePath(0, url, "/", 1, 0)
-			
-			// find project short title
-			shortTitle = GetShortTitle(filePath)
-			if (strlen(shortTitle) == 0) // we found the URL, but not the short title
-				shortTitle = ParseFilePath(3, filePath, ":", 0, 0) // use fileName
-			endif
-			
-			// version number of local file
-			localVersion = GetProcVersion(filePath)
-			if (localVersion == 0)
-				continue
-			endif
-			strLocVer = GetPragmaString("version", filePath)
-			filesInfo = filePath
-			if (stringmatch(filePath, SpecialDirPath("Igor Pro User Files", 0, 0, 0) + "*"))
-				filesInfo = filePath[strlen(SpecialDirPath("Igor Pro User Files", 0, 0, 0)),Inf]
-			endif
-				
-		endif
+		endfor
 		
-		// now check release version
-		// if release info was recently cached, use that
-		keyList = CacheGetKeylist(projectID)
-		cacheDate = NumberByKey("ReleaseCacheDate", keyList)
-		cacheDate = numtype(cacheDate)==0 ? cacheDate : 0
-		if ((forced&2) || cacheDate < (datetime - oneDay) )
-			keyList = ""
-			// download the project web page
-			if (gui == 1)
-				SetPanelStatus("Downloading " + url); DoUpdate/W=InstallerPanel
-			endif
-				
-			// download project web page, parse contents and format as keyList
-			keyList = DownloadKeylistFromProjectPage(projectID, prefs.pagetimeout)
-			
-			if (strlen(keyList) == 0) // download failed
-				strExitStatus += shortTitle + ","
-				continue
-			endif
-				
-			// store retrieved values in cache
-			keyList = ReplaceStringByKey("ReleaseCacheDate", keyList, num2istr(datetime))
-			CachePutKeylist(keyList)
-		endif
-			
-		releaseVersion = NumberByKey("remote", keyList)
-
-		if (checkInstalled)	// checking projects in install log
-			if (releaseVersion > localVersion)
-				if (releaseIgorVersion<=currentIgorVersion && stringmatch(fileStatus, "complete"))
-					fileStatus += ", update available" // don't allow updates for incomplete or missing projects
-				elseif (stringmatch(fileStatus, "complete"))
-					fileStatus += ", update incompatible"
-				endif
-			elseif (stringmatch(fileStatus, "complete"))
-				fileStatus += ", up to date"
-			endif
-		else // checking based on a filePath
-			if (localVersion >= releaseVersion)
-				fileStatus = "up to date"
-			elseif (releaseIgorVersion <= currentIgorVersion)
-				fileStatus = "update available"
-			else
-				fileStatus = "update incompatible"
-			endif
-		endif
-
-		j = DimSize(UpdatesFullList,0)
-		InsertPoints/M=0 j, 1, UpdatesFullList
-		UpdatesFullList[j][%projectID]          = projectID
-		UpdatesFullList[j][%name]               = shortTitle
-		UpdatesFullList[j][%status]             = fileStatus
-		UpdatesFullList[j][%local]              = strLocVer
-		UpdatesFullList[j][%remote]             = StringByKey("remote", keyList)
-		UpdatesFullList[j][%system]             = StringByKey("system", keyList)
-		UpdatesFullList[j][%releaseDate]        = StringByKey("releaseDate", keyList)
-		UpdatesFullList[j][%installPath]        = filePath // full path to install folder or to ipf
-		UpdatesFullList[j][%releaseURL]         = StringByKey("releaseURL", keyList)
-		UpdatesFullList[j][%releaseIgorVersion] = ""
-		UpdatesFullList[j][%installDate]        = installDate
-		UpdatesFullList[j][%filesInfo]          = filesInfo
-		UpdatesFullList[j][%lastUpdate]         = lastUpdate
-		if (GrepString(fileStatus, "update available"))
-			UpdatesFullList[j][%releaseInfo] = StringByKey("releaseInfo", keyList)
-		endif
+		wNew[][%lastUpdate]        = GetFileLastUpdateStr(w[p]) // is it worth MT?
+		multithread wNew[][%name]  = GetShortTitle(w[p])
+		wNew[][%name]              = SelectString(strlen(wNew)==0, wNew, ParseFilePath(3, w[p], ":", 0, 0))
+		multithread wNew[][%local] = GetPragmaString("version", w[p])
+		wNew[][%installPath]       = w[p]
+		wNew[][%filesInfo]         = w[p]
+		wNew[][%filesInfo] = SelectString(stringmatch(filePath, UserFilesPath + "*"), wNew, (wNew[p][q])[strlen(UserFilesPath),Inf])
+	endif
 		
-		if (gui == 1)
-			resortWaves(1, 0) // match current sort order for gui
-			UpdateListboxWave(fGetStub())
-		endif
-	endfor
+	// reload from cache
+	Make/free/T/N=(numProjects) wKeyLists, wStatusExtra
+	Make/free/N=(numProjects) wCacheDates, wDoDownload, wReleaseVersions, wLocalVersions
+	wKeyLists   = CacheGetKeylist(wNew[p][%projectID])
+	wCacheDates = NumberByKey("ReleaseCacheDate", wKeyLists)
+	wCacheDates = numtype(wCacheDates) == 0 ? wCacheDates : 0
+	wDoDownload = forced&2 || wCacheDates<OneDayAgo
+	
+	numDownloads = sum(wDoDownload)
+	#ifdef debug
+	Print "started download of", numDownloads, "project pages"
+	#endif
+	
+	SetPanelStatus("Checking IgorExchange")
+		
+	// potentially download new keylists
+	multithread wKeyLists = SelectString(wDoDownload, wKeyLists, DownloadKeylistFromProjectPage(wNew[p][%projectID], prefs.pagetimeout) )
+		
+	// check for download errors before doing cache
+	wDoDownload = wDoDownload && strlen(wKeyLists[p]) > 0
+	#ifdef debug
+	Print sum(wDoDownload), "successful downloads"
+	#endif
+	
+	// revert to cached values for any failed downloads
+	wKeyLists = SelectString(strlen(wKeyLists) > 0, CacheGetKeylist(wNew[p][%projectID]), wKeyLists)
+	wKeyLists = SelectString(wDoDownload, wKeyLists, ReplaceStringByKey("ReleaseCacheDate", wKeyLists, num2istr(datetime)))
+	wKeyLists = SelectString (strlen(StringByKey("ShortTitle", wKeyLists))==0, wKeyLists, ReplaceStringByKey("ShortTitle", wKeyLists, wNew[p][%name]))
+	
+	// cache new downloads
+	wDoDownload = wDoDownload ? CachePutKeylist(wKeyLists) : 0
+	
+	wReleaseVersions = NumberByKey("remote", wKeyLists)
+	// ignore release Igor version because we can't check it!
+	if (checkInstalled)
+		wLocalVersions   = str2num(wNew[p][%local])
+		wStatusExtra     = SelectString(wReleaseVersions > wLocalVersions, ", up to date", ", update available")
+		wNew[][%status] += SelectString(stringmatch(wNew[p][%status] , "complete"), "", wStatusExtra[p])
+	else
+		multithread wLocalVersions = GetProcVersion(w[p])
+		wNew[][%status]  = SelectString(wReleaseVersions[p] > wLocalVersions[p], "up to date", "update available")
+	endif
+		
+	wNew[][%remote]      = StringByKey("remote", wKeyLists[p])
+	wNew[][%system]      = StringByKey("system", wKeyLists[p])
+	wNew[][%releaseDate] = StringByKey("releaseDate", wKeyLists[p])
+	wNew[][%releaseURL]  = StringByKey("releaseURL", wKeyLists[p])
+	wNew[][%releaseInfo] = StringByKey("releaseInfo", wKeyLists[p]) // not just for available releases
+		
+	if (ParamIsDefault(pid))
+		Duplicate/O/T wNew UpdatesFullList
+	else
+		InsertPoints/M=0 DimSize(UpdatesFullList, 0), 1, UpdatesFullList
+		UpdatesFullList[DimSize(UpdatesFullList, 0)-1][] = wNew[0][q]
+	endif
 		
 	if (gui == 1)
-		strExitStatus = SelectString(strlen(strExitStatus)>0,"","D/L failed for " + RemoveEnding(strExitStatus, ","))
-		SetPanelStatus(strExitStatus)
+		ResortWaves(1, 0) // match current sort order for gui
 	endif
+	
 	return 1
+end
+
+function/S GetFileLastUpdateStr(string filepath)
+	GetFileFolderInfo/Q/Z filePath
+	return SelectString(V_isFile == 0, num2istr(V_modificationDate), ""	)
 end
 
 function GetFileCreationDate(string strFilePath)
@@ -5169,7 +5000,7 @@ function ResortWaves(int tabNum, int sortCol)
 		
 	// record new sort order in listbox userdata
 	wfprintf strSortOrder, "%d;", SortOrder
-	ListBox $lb win=InstallerPanel, userdata(sortcolumn)=strSortOrder
+	ListBox/Z $lb win=InstallerPanel, userdata(sortcolumn)=strSortOrder
 	
 	// create a ranking wave for FullList where identical strings are given equal rank
 	// this allows multiple columns to be used as sort keys
@@ -5227,6 +5058,8 @@ end
 threadsafe function/S ParseReleaseDate(string str)
 	string strDay, strAMPM
 	variable year, month, day, HH, MM
+	
+	str = ReplaceString("\"", str, "")
 	sscanf str, "%s %g/%g/%d - %d:%d %s", strDay, month, Day, Year, HH, MM, strAMPM
 	return num2istr(DateToJulian(year, month, day))
 end
@@ -5369,15 +5202,12 @@ function InstallerButtonProc(STRUCT WMButtonAction &s)
 			break
 		case "ButtonClear" :
 			fClearText(1)
-			
 			SetWindow InstallerPanel#nb0 userdata(stublen) = "0"
-			
 			Button ButtonClear, win=InstallerPanel, disable=3
 			UpdateListboxWave("")
 			break
 		case "btnSettings" :
-			MakePrefsPanel()
-			PauseForUser UpdaterPrefsPanel
+			SettingsMenu()
 			break
 		case "btnInfo" :
 			ProjectInfo()
@@ -5387,32 +5217,17 @@ function InstallerButtonProc(STRUCT WMButtonAction &s)
 			if (NumberByKey("RUN", s_info) != 0)
 				break
 			endif
-			
-//			DFREF dfr = root:Packages:Installer
-//			string ProjectID = ""
-			
 			ControlInfo/W=InstallerPanel tabs
 			if (v_value == 0)
-
-				// This will download one page at a time, but as the
-				// downloaded data are processed Igor becomes annoyingly laggy.
-//				StartPreemptiveDownload(1, "", pagenum=0)
-							
 				StartPreemptiveDownload(1, "")
-
+				// Alternatively, this will download one page at a time, but as the
+				// downloaded data are processed Igor becomes annoyingly laggy:
+				// StartPreemptiveDownload(1, "", pagenum=0)
 			else
 				ControlInfo/W=InstallerPanel popupFolder
 				variable options = 2^(V_Value)
-				
-//				wave/T matchlist = dfr:UpdatesMatchList
-//				ControlInfo/W=InstallerPanel listboxUpdate
-//				if (v_value>-1 && v_value<DimSize(matchlist,0))
-//					ProjectID = matchlist[v_value][%projectID]
-//				endif
-				
 				StartPreemptiveDownload(options, "")
-				
-			endif			
+			endif
 			break
 	endswitch
 	return 0
@@ -5463,7 +5278,7 @@ function InstallerListBoxProc(STRUCT WMListboxAction &s)
 					Button btnInstallOrUpdate, win=InstallerPanel, disable=0
 				else
 					Button btnInstallOrUpdate, win=InstallerPanel, disable=2-2*(stringmatch(s.listWave[v_value][1], "*update available"))
-				endif		
+				endif
 				
 				#ifdef testing
 				Button btnInstallOrUpdate, win=InstallerPanel, disable=0
@@ -5544,16 +5359,14 @@ function InstallerRightClick(STRUCT WMListboxAction &s)
 	// Projects tab
 	if (cmpstr(s.ctrlName, "ListBoxInstall") == 0)
 		if (s.col == 1)
-			PopupContextualMenu "Author Web Page;"
+			PopupContextualMenu "Author Profile Page;"
 			if (v_flag == 1)
 				url = "https://www.wavemetrics.com/user/" + matchlist[s.row][%userNum]
 			endif
 		else
-			PopupContextualMenu "Browse Project Web Page;"   //+ "Reload Info for This Project;"
+			PopupContextualMenu "Browse Project Web Page;"
 			if (v_flag == 1)
 				url = "https://www.wavemetrics.com/node/" + matchlist[s.row][%projectID]
-			elseif (v_flag == 2)
-				ReloadProject(projectID)
 			endif
 		endif
 		if (strlen(url))
@@ -5579,7 +5392,7 @@ function InstallerRightClick(STRUCT WMListboxAction &s)
 			if (GrepString(GetInstallStatus(projectID), "missing"))
 				LogUpdateInstallPath(projectID, ParseFilePath(1, S_path, ":", 1, 0))
 			endif
-			ReloadUpdateslist(1, 1, pid=projectID)
+			ReloadUpdateslist(1, 1, pid=projectID) // force reload of local file
 			UpdateListboxWave(fGetStub())
 		elseif (v_flag == 3)
 			string path = matchlist[s.row][%installPath]
@@ -5587,7 +5400,7 @@ function InstallerRightClick(STRUCT WMListboxAction &s)
 			path = SelectString( (v_flag!=0 || V_isFolder==0) , path, "")
 			variable version = str2num(matchlist[s.row][%remote])
 			InstallProject(matchlist[s.row][%projectID], gui=1, path=path, shortTitle=matchlist[s.row][%name])
-			ReloadUpdatesList(1, 1, pid=projectID)
+			ReloadUpdatesList(1, 1, pid=projectID) // force reload of local file
 		endif
 	else
 		cmd = "Project Web Page;"
@@ -5618,31 +5431,28 @@ function InstallerRightClick(STRUCT WMListboxAction &s)
 			NewPath/O/Q/Z TempInstallPath strPath
 			PathInfo/SHOW TempInstallPath
 		elseif (v_flag == 3) // recheck file
-			ReloadUpdatesList(1, 1, pid=projectID)
+			ReloadUpdatesList(1, 1, pid=projectID) // force reload of local file
 		elseif (v_flag == 4) // recheck IgorExchange
-//			ReloadUpdatesList(2, 1, pid=projectID)
+			ReloadUpdatesList(2, 1, pid=projectID)
 			
-			ControlInfo/W=InstallerPanel popupFolder
-			variable options = 2^(V_Value)
-			StartPreemptiveDownload(options, ProjectID)			
+//			ControlInfo/W=InstallerPanel popupFolder
+//			variable options = 2^(V_Value)
+//			StartPreemptiveDownload(options, ProjectID)
 			
 		elseif (v_flag == 5) // uninstall
 			STRUCT PackagePrefs prefs
 			LoadPrefs(prefs)
 			WriteToHistory("Uninstalling " + matchlist[s.row][%name], prefs, 0)
 			UninstallProject(matchlist[s.row][%projectID])
-// *** check ***
-			ReloadUpdateslist(1, 1, pid=projectID)
+			ReloadUpdateslist(1, 1, pid=projectID) // force reload of local file
 			UpdateListboxWave(fGetStub())
 		elseif (stringmatch(S_selection, "Sync*"))  //v_flag == 6) // resync log file
 			LogSyncWithProjectFile(matchlist[s.row][%projectID])
-// *** check ***
 			ReloadUpdatesList(0, 1, pid=projectID)
 			UpdateListboxWave(fGetStub())
 		elseif (stringmatch(S_selection, "Remove*"))
 			LogRemoveProject(projectID)
-			ReloadUpdateslist(1, 1, pid=projectID)
-//			ReloadUpdatesList(1, 1)
+			ReloadUpdateslist(1, 1, pid=projectID) // force reload of local file
 			UpdateListboxWave(fGetStub())
 		endif
 	endif
@@ -5728,14 +5538,14 @@ function UpdateListboxWave(string str)
 				HelpList[][2] = SelectString(strlen(matchList[p][%installDate])==0 && strlen(matchList[p][%lastUpdate]), HelpList, "Last modified " + Secs2Date(str2num(matchList[p][%lastUpdate]), 0))
 
 				//HelpList[][3] = "Released on " + JulianToDate(str2num(matchList[p][%releaseDate]), prefs.dateFormat)
+				// use secs2date rather than JulianToDate because sec2date allows us to use system default formatting even for older Igor versions
 				HelpList[][3] = "Released on " + Secs2Date(date2secs(1995, 10, 9) + (str2num(matchList[p][%releaseDate]) - 2450000) * 86400, 0)
 				HelpList[][3] += "\rFile type: " + ParseFilePath(4, matchList[p][%releaseURL], "/", 0, 0)
 				
+				// highlight available updates with a change in text colour
 				wave/T UpdatesDisplayList = dfr:UpdatesDisplayList
-//				#ifdef MACINTOSH // colours are not legible on Windows owing to strong colouring of selected listbox cells
 				UpdatesDisplayList[][] = SelectString(stringmatch(UpdatesDisplayList[p][1], "*available"), UpdatesDisplayList, "\\K(4321,32885,448)" + UpdatesDisplayList)
 				UpdatesDisplayList[][] = SelectString(GrepString(UpdatesDisplayList[p][1], "missing|incomplete"), UpdatesDisplayList, "\\K(65535,0,0)" + UpdatesDisplayList)
-//				#endif
 			else
 				Make/O/N=(0,4)/T dfr:UpdatesDisplayList, dfr:UpdatesHelpList
 			endif
@@ -5763,7 +5573,6 @@ function UpdateListboxWave(string str)
 			sprintf s "Showing %d of %d projects", DimSize(DisplayList, 0), DimSize(FullList, 0)
 			SetPanelStatus(s)
 			Button btnInstallOrUpdate, win=InstallerPanel, disable=2
-//			Button btnRefresh, win=InstallerPanel, help={"Refresh"}
 		endif
 	else
 		sprintf s "Showing %d of %d projects", DimSize(DisplayList, 0), DimSize(FullList, 0)
@@ -5773,10 +5582,11 @@ end
 
 function SetPanelStatus(string strText)
 	TitleBox statusBox, win=InstallerPanel, title=strText
+	DoUpdate/W=InstallerPanel
 	return 0
 end
 
-function/S GetUpdateURLfromFile(string filePath)
+threadsafe function/S GetUpdateURLfromFile(string filePath)
 	string url = ""
 	variable projectID = GetConstantFromFile("kProjectID", filePath)
 	if (numtype(projectID) == 0)
@@ -5825,11 +5635,14 @@ function InstallSelection()
 		url = S_fileName
 		#endif
 		
-		success = install(url, gui=2)
-		// we use install rather than installProject because install may be able to figure out short title.
+//		success = install(url, gui=2)
+//		// we use install rather than installProject because install may be able to figure out short title.
+				
+		success = installProject(projectID, gui=2)
+		
 		if (success)
 			SetPanelStatus("Reloading Updates List")
-			ReloadUpdatesList(1, 1, pid=projectID)
+			ReloadUpdatesList(1, 1, pid=projectID) // force reload of local file
 			SetPanelStatus("Install Complete")
 		else
 			SetPanelStatus("Selected: " + matchlist[v_value][%name])
@@ -5842,11 +5655,6 @@ function InstallSelection()
 	#endif
 	
 	return 0
-end
-
-function/S julianstring2systemdate(string strJulian)
-	int seconds = date2secs(1995, 10, 9) + (str2num(strJulian) - 2450000) * 86400	
-	return Secs2Date(date2secs(1995, 10, 9) + (str2num(strJulian) - 2450000) * 86400, 0)
 end
 
 function AnimateButton(STRUCT WMBackgroundStruct &s)
@@ -5871,9 +5679,9 @@ function CheckPanelVersion(string win, int restart)
 	string strVersion = GetUserData(win, "", "version")
 	if (strlen(strVersion) == 0)
 		#ifdef debug
-		print "entering CheckPanelVersion with wrong window?"
-		#endif	
-		return 0	
+		Print "entering CheckPanelVersion with wrong window?"
+		#endif
+		return 0
 	endif
 	
 	if (cmpstr(strVersion, num2str(GetThisVersion())))
@@ -5890,6 +5698,43 @@ function CheckPanelVersion(string win, int restart)
 	return 0
 end
 
+function SettingsMenu()
+	PopupContextualMenu "Edit Settings;Show History;"
+	if (V_flag == 1)
+		MakePrefsPanel()
+		PauseForUser UpdaterPrefsPanel
+	elseif (V_flag == 2)
+		ShowHistory()
+	endif
+	return 0
+end
+
+function ShowHistory()
+	string filePath = GetInstallerFilePath(ksHistoryFile)
+	if (WinType("HistoryPanel") == 7)
+		DoWindow/F HistoryPanel
+	else
+		// read history file into a notebook embedded in a panel
+		GetMouse
+		NewPanel/K=1/N=HistoryPanel/W=(v_left, v_top, v_left+400, v_top+500) as "History"
+		variable grout = 5
+		DefineGuide/W=HistoryPanel Ftop = {FT, 30}
+		DefineGuide/W=HistoryPanel Fbottom = {FB, -grout}
+		DefineGuide/W=HistoryPanel Fleft = {FL, grout}
+		DefineGuide/W=HistoryPanel Fright = {FR, -grout}
+		NewNotebook/F=1/N=nbHistory/HOST=HistoryPanel/FG=(Fleft,Ftop,Fright,Fbottom)/OPTS=8
+				
+		SetWindow HistoryPanel#nbHistory, activeChildFrame=0
+		string s_value = ""
+		Grep/Q/E=""/LIST="\r•" filePath // no need for Igor 8 workaround because s_value is created by GetWindow
+		Notebook HistoryPanel#nbHistory selection={startOfFile,endofFile}, margins={0,0,2000}, text=RemoveEnding(s_value, "•")
+		Notebook HistoryPanel#nbHistory selection={endofFile,endofFile}, findText={"",1}
+		Button btnHistoryClear win=HistoryPanel, pos={5,5}, title="Clear All", size={60,20}, Proc=PrefsButtonProc
+		Button btnHistoryShow win=HistoryPanel, pos={75,5}, title="Show File", size={75,20}, Proc=PrefsButtonProc
+		Button btnHistoryOpen win=HistoryPanel, pos={160,5}, title="Open as Notebook", size={125,20}, Proc=PrefsButtonProc
+	endif
+end
+
 function ProjectInfo()
 	string cmd = "(Version: " + num2str(GetThisVersion()) + ";"
 	cmd += "Visit web page;Email the developer;"
@@ -5897,16 +5742,16 @@ function ProjectInfo()
 	if (V_flag == 2)
 		BrowseURL /Z "https://www.wavemetrics.com/node/8197"
 	elseif (V_flag == 3)
-		make/T/free/N=5 wt = "mail"
+		Make/T/free/N=5 wt = "mail"
 		string newline = "\r"
 		#ifdef WINDOWS
 		newline = "\n"
 		#endif
-		wt[3] = "subject=" + URLencode("Updater Package for Igor Pro")
+		wt[3] = "subject=" + URLEncode("Updater Package for Igor Pro")
 		wt[4] = "Type your message here" + newline + newline
 		wt[4] += "VERSION:" + num2str(GetThisVersion()) + newline
 		wt[4] += ReplaceString(";", IgorInfo(3), newline) + newline
-		wt[4] = "body=" + URLencode(wt[4])
+		wt[4] = "body=" + URLEncode(wt[4])
 		wt[1] = "tony withers"
 		wt[2] = "uni-bayreuth de"
 		sprintf cmd, "%sto:%s%%%d%s?%s&%s" wt[0], wt[1], 40, wt[2], wt[3], wt[4]
@@ -5980,7 +5825,7 @@ function fHook(STRUCT WMWinHookStruct &s)
 				break
 		endswitch
 		Button ButtonClear, win=InstallerPanel, disable=3*(stublen == 0)
-		fClearText((stubLen == 0));
+		fClearText(stubLen == 0);
 	endif
 				
 	if (s.eventcode != 11)
@@ -6002,7 +5847,7 @@ function fHook(STRUCT WMWinHookStruct &s)
 			stubLen = V_endPos
 			break
 		case 28: // left arrow
-			fClearText((stubLen == 0)); return 0
+			fClearText(stubLen == 0); return 0
 		case 29: // right arrow
 			GetSelection Notebook, InstallerPanel#nb0, 1
 			if (V_endPos >= stubLen)
@@ -6011,9 +5856,9 @@ function fHook(STRUCT WMWinHookStruct &s)
 				else
 					Notebook InstallerPanel#nb0 selection={(0,stubLen),(0,stubLen)}
 				endif
-				fClearText((stubLen == 0)); return 1
+				fClearText(stubLen == 0); return 1
 			endif
-			fClearText((stubLen == 0)); return 0
+			fClearText(stubLen == 0); return 0
 		case 8:
 		case 127: // delete or forward delete
 			GetSelection Notebook, InstallerPanel#nb0, 1
@@ -6076,7 +5921,7 @@ function fHook(STRUCT WMWinHookStruct &s)
 	Notebook InstallerPanel#nb0 selection={(0,selEnd),(0,selEnd)}, findText={"",1}
 	
 	Button ButtonClear, win=InstallerPanel, disable=3*(stublen == 0)
-	fClearText((stubLen == 0))
+	fClearText(stubLen == 0)
 	
 	SetWindow InstallerPanel#nb0 userdata(stublen) = num2str(stubLen)
 	
@@ -6091,8 +5936,10 @@ function fClearText(int doIt)
 end
 
 function/T fGetStub()
-	DFREF dfr = root:Packages:Installer
-	NVAR stubLen = dfr:stubLen
+
+	variable stubLen = str2num(GetUserData("InstallerPanel#nb0", "", "stublen"))
+	stubLen = numtype(stubLen) ? 0 : stubLen
+	
 	// find and save current position
 	GetSelection Notebook, InstallerPanel#nb0, 1
 	int selEnd = V_endPos
@@ -6118,7 +5965,7 @@ function/T fCompleteStr(string stub, wave/T w, int maxcol)
 	for (i=1;i<=maxcol;i++)
 		Grep/A/GCOL=(i)/DCOL={0}/Z/E="(?i)^"+stub w as w_out
 	endfor
-	sort w_out, w_out
+	Sort w_out, w_out
 	RemoveDuplicates(w_out)
 	if (numpnts(w_out))
 		return (w_out[0])[stubLen,Inf]
@@ -6134,13 +5981,13 @@ function/T fArrowKey(string stub, string ending, int increment, wave/T wList, in
 	if (stubLen == 0)
 		return ""
 	endif
-	make/free/T/N=0 w_out
+	Make/free/T/N=0 w_out
 	int i
 	for(i=1;i<=maxcol;i++)
 		Grep/A/Z/GCOL=(i)/DCOL={0}/E="(?i)^"+stub wList as w_out
 	endfor
 	RemoveDuplicates(w_out)
-	sort w_out, w_out
+	Sort w_out, w_out
 	if (DimSize(w_out, 0) == 0)
 		return ""
 	endif
@@ -6625,9 +6472,9 @@ function LogSyncWithProjectFile(string projectID)
 		
 		#ifdef debug
 		string cmd = ""
-		sprintf cmd, "Resynching log for %s. Log version (%g) was reset to match file version (%g).", StringFromList(1, strLine), logVersion, fileVersion 
-		print cmd
-		#endif	
+		sprintf cmd, "Resynching log for %s. Log version (%g) was reset to match file version (%g).", StringFromList(1, strLine), logVersion, fileVersion
+		Print cmd
+		#endif
 		return 1
 	endif
 	
@@ -6710,11 +6557,11 @@ function PrepareProjectRelease()
 		DoAlert 0, "Please save procedure file before preparing release!"
 		return 0
 	endif
-	string filePath = GetProcWinFilePath(procedure)
-	string projectID = GetProjectIDString(filePath)
+	string filePath   = GetProcWinFilePath(procedure)
+	string projectID  = GetProjectIDString(filePath)
 	string shortTitle = GetShortTitle(filePath)
-	variable version = GetProcVersion(filePath)
-	variable IgorVer = GetPragmaVariable("IgorVersion",filePath)
+	variable version  = GetProcVersion(filePath)
+	variable IgorVer  = GetPragmaVariable("IgorVersion",filePath)
 	string extraFiles = "", includes = ""
 	
 	if (strlen(shortTitle) == 0)
@@ -6722,7 +6569,7 @@ function PrepareProjectRelease()
 	endif
 	
 	if (moreFiles!=2 && cmpstr(projectID,"8197")==0)
-		doAlert 0, "You forgot the install script. Doh!"
+		DoAlert 0, "You forgot the install script. Doh!"
 		return 0
 	endif
 		
@@ -6782,7 +6629,7 @@ function PrepareProjectRelease()
 	printf "\r * Preparing project release for %s *\r", shortTitle
 	
 	
-	// try to check for missing include statements	
+	// try to check for missing include statements
 	string listOfIncludedWMprocs = WinList("*", ";", "INCLUDE:4")
 	listOfIncludedWMprocs = CleanIncludesList(listOfIncludedWMprocs)
 	
@@ -6841,7 +6688,7 @@ function PrepareProjectRelease()
 	// edit fileName format here
 	sprintf archive, "%s%d%02d.zip" shortTitle, floor(version), 100*(version-floor(version))
 		
-	zipFiles(filePath, SpecialDirPath("Desktop", 0, 0, 0) + archive, verbose=0)	
+	zipFiles(filePath, SpecialDirPath("Desktop", 0, 0, 0) + archive, verbose=0)
 	Print "Files added to archive:"
 	for (i=ItemsInList(filePath)-1;i>=0;i--)
 		Print ParseFilePath(0, StringFromList(i, filePath), ":", 1, 0)
@@ -6899,13 +6746,6 @@ function PrepareProjectRelease()
 			BrowseURL/Z "https://www.wavemetrics.com/node/" + projectID
 		endif
 	endif
-	
-//	doAlert 1, "Show file on desktop?"
-//	if (v_flag == 1)
-//		NewPath/O/Q/Z TempInstallPath SpecialDirPath("Desktop", 0, 0, 0)
-//		PathInfo/SHOW TempInstallPath	// show file on desktop
-//		KillPath/Z TempInstallPath
-//	endif
 	
 end
 
@@ -7097,4 +6937,16 @@ function CreateInstallScript()
 	NewPath/O/Q/Z TempInstallPath ParseFilePath(1, S_fileName, ":", 1, 0)
 	PathInfo/SHOW TempInstallPath	// show file on desktop
 	KillPath/Z TempInstallPath
+end
+
+function tic()
+	variable/G tictoc = StartMSTimer
+end
+ 
+function toc()
+	NVAR/Z tictoc
+	variable ttTime = StopMSTimer(tictoc)
+	printf "%g seconds\r", (ttTime/1e6)
+	KillVariables/Z tictoc
+	return ttTime
 end
