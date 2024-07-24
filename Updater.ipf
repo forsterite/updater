@@ -1,6 +1,6 @@
 #pragma TextEncoding="UTF-8"
 #pragma rtGlobals=3
-#pragma version=5.0
+#pragma version=5.04
 #pragma IgorVersion=8
 #pragma IndependentModule=Updater
 #include <Resize Controls>
@@ -131,6 +131,9 @@ strconstant ksLogPath = "User Procedures:IgorExchange Installer:" // path to loc
 strconstant ksHistoryFile = "History.txt" // Installation and update activity is recorded in this file
 strconstant ksCacheFile = "Cache.txt" // file used as cache for information parsed from IgorExchange web pages
 strconstant ksLogFile = "Install.log" // file used to record details of each installed project
+
+strconstant ksProjectsDimLabelsList = "projectID;ProjectCacheDate;name;author;published;views;type;userNum;;;"
+strconstant ksUpdatesDimLabelsList = "projectID;name;status;local;remote;system;releaseDate;installPath;releaseURL;releaseIgorVersion;installDate;filesInfo;releaseInfo;lastUpdate;;"
 
 // location for a failsafe file, can be used to restore updater if the IgorExchange website format is changed
 strconstant ksGitHub = "https://raw.githubusercontent.com/forsterite/updater/main/Updater.ipf"
@@ -266,7 +269,7 @@ function StartPreemptiveDownload(int options, string projectID, [variable pagenu
 	MoveWave w_InstalledProjectIDs dfrIn:w_InstalledProjectIDs
 	variable/G dfrIn:v_timeout = prefs.pagetimeout
 	variable/G dfrIn:v_options = options
-	string/G dfrIn:s_project = projectID
+	string/G   dfrIn:s_project = projectID
 	variable/G dfrIn:v_pagenum = ParamIsDefault(pagenum) ? -1 : pagenum
 		
 	WAVEClear w_InstalledProjectIDs, w_InstalledVersions
@@ -368,8 +371,16 @@ threadsafe function PreemptiveDownloader()
 	
 	// check the version version of updater in the GitHub repository
 	variable/G :GitVer /N=GitVer
-	GitVer = GetGitHubVersion(timeout)
+	string/G   :strAlert /N=strAlert
+	
+	variable gv
+	string alrt
+	[gv, alrt] = GetGitHubVersion(timeout)
+	GitVer = gv
+	strAlert = alrt
+	
 	NVAR/Z GitVer = $"" // not strictly required,
+	SVAR/Z strAlert = $""
 	// but good to clear all references to objects in the output data folder
 		
 	// ThreadGroupPutDF requires that no waves in the data folder be referenced
@@ -591,14 +602,24 @@ function BackgroundCheck(STRUCT WMBackgroundStruct &s)
 	KillDataFolder/Z root:InstallerBG:
 	
 	NVAR/SDFR=dfr GitVer = GitVer
+	SVAR/SDFR=dfr strAlert = strAlert
 	if (debugging)
 		Print "Updater version =", GetThisVersion()
 		Print "GitHub version =", GitVer
+		Print "Alert =", strAlert
+	endif
+	
+	// if alert string has been set, trigger an emergency repair
+	if (strlen(strAlert) && GitVer > GetThisVersion())				
+		DoAlert 0, strAlert
+		RepairUpdater(silently=2)
+		CtrlNamedBackground animation, stop
+		return 0
 	endif
 	
 	if (!gui)
 		
-		if (UpdateAvailable==1 && cmpstr(strName, "Project Updater")==0)
+		if (UpdateAvailable==1 && grepstring(strName, "Updater$")==0)
 			if (GetThisVersion() >= remote)
 				LogSyncWithProjectFile("8197")
 				UpdateAvailable = 0 // this may prevent us from fixing a file with version higher than current release version
@@ -620,6 +641,7 @@ function BackgroundCheck(STRUCT WMBackgroundStruct &s)
 				
 				SavePackagePreferences ksPackageName, ksPrefsFileName, 0, prefs
 				MakeInstallerPanel()	// use the data we stashed in the cache to create panel
+				SetWindow InstallerPanel UserData(GitVer) = num2str(GitVer)
 				checkGit = 0 // don't check github version if user will try to update via panel
 			endif
 		endif
@@ -627,7 +649,7 @@ function BackgroundCheck(STRUCT WMBackgroundStruct &s)
 		if (checkGit && GitVer>GetThisVersion())
 			DoAlert 1, "It looks like Updater may need to be repaired or updated\r\rDo you want to update to version " + num2str(GitVer) + "?"
 			if (v_flag == 1) // yes
-				RepairUpdater() 
+				RepairUpdater(silently=2) 
 			endif
 		endif
 	endif
@@ -1035,23 +1057,19 @@ end
 // lastUpdate: timestamp for last update applied by updater (datetime)
 function ResetColumnLabels()
 	DFREF dfr = root:Packages:Installer
-	string dimLabelsList = ""
 	wave/T/SDFR=dfr/Z UpdatesFullList, UpdatesMatchList, ProjectsFullList, ProjectsMatchList
 	
 	if (WaveExists(ProjectsFullList))
 		if (FindDimLabel(ProjectsFullList, 1, "userNum") == -2)
-			dimLabelsList = "projectID;name;author;published;views;type;userNum;;;;"
-			SetDimLabels(dimLabelsList, 1, ProjectsFullList)
-			SetDimLabels(dimLabelsList, 1, ProjectsMatchList)
+			SetDimLabels(ksProjectsDimLabelsList, 1, ProjectsFullList)
+			SetDimLabels(ksProjectsDimLabelsList, 1, ProjectsMatchList)
 		endif
 	endif
 	
 	if (WaveExists(UpdatesFullList))
 		if (FindDimLabel(UpdatesFullList, 1, "lastUpdate") == -2)
-			dimLabelsList = "projectID;name;status;local;remote;system;releaseDate;installPath;"
-			dimLabelsList += "releaseURL;releaseIgorVersion;installDate;filesInfo;releaseInfo;lastUpdate;;"
-			SetDimLabels(dimLabelsList, 1, UpdatesFullList)
-			SetDimLabels(dimLabelsList, 1, UpdatesMatchList)
+			SetDimLabels(ksUpdatesDimLabelsList, 1, UpdatesFullList)
+			SetDimLabels(ksUpdatesDimLabelsList, 1, UpdatesMatchList)
 		endif
 	endif
 end
@@ -1321,11 +1339,17 @@ function/S UpdateZip(filePath, url, projectID, [shortTitle, localVersion, newVer
 	// test to find out which files will be overwritten
 	fileList = MergeFolder(unzipPathStr, installPathStr, test=1, ignore=ksIgnoreFilesList)
 	numFiles = ItemsInList(fileList)
-	oldFiles = LogGetFileList(projectID) // file list from log (if log exists)
+	
+	if (strlen(ipfname)) 
+		oldFiles = fileList
+	else
+		oldFiles = LogGetFileList(projectID) // file list from log (if log exists)
+	endif
+
 	staleFiles = RemoveFromList(fileList, oldFiles, ";", 0) // files to be removed
 	oldFiles = fileList // files to be overwritten
 	if (strlen(staleFiles))
-		oldFiles = AddListItem(staleFiles, oldFiles)
+		oldFiles = AddListItem(removeending(staleFiles, ";"), oldFiles)
 	endif
 	variable numOldFiles = ItemsInList(oldFiles)
 	
@@ -1344,7 +1368,7 @@ function/S UpdateZip(filePath, url, projectID, [shortTitle, localVersion, newVer
 	// create backup folder
 	if (numOldFiles && strlen(backupPathStr))
 		string folderName
-		sprintf folderName, "%s_%0.2f",shortTitle,localVersion
+		sprintf folderName, "%s_%0.2f", shortTitle, localVersion
 		folderName = CleanupName(folderName,0) // making it Igor-legal should hopefully ensure the name is good for the OS
 		sprintf backupPathStr, "%s%s:", backupPathStr, folderName
 		NewPath/Q/C/O/Z tempPathIXI, backupPathStr; KillPath/Z tempPathIXI
@@ -2679,66 +2703,8 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 		if (strlen(url) == 0)
 			return 0
 		endif
-
-
-
-
-		
-//		// try to download 'all releases' page
-//		sprintf url, "https://www.wavemetrics.com/project-releases/%s" projectID
-//		if (gui)
-//			SetPanelStatus("Downloading " + url)
-//		endif
-//		URLRequest/time=(prefs.pageTimeout)/Z url=url
-//		if (V_flag)
-//			sprintf cmd, "Could not load %s\r", url
-//			WriteToHistory(cmd, prefs, gui)
-//			return 0
-//		endif
-//		sprintf cmd, "Looking for releases at %s\r", url
-//		WriteToHistory(cmd, prefs, 0)
-			
-//		// parse page to populate w_releases
-//		wave/T w_releases = ParseAllReleasesAsWave(S_serverResponse) // free text wave
-//		if (DimSize(w_releases,0) == 0)
-//			sprintf cmd, "Could not find packages at %s.\r", url
-//			WriteToHistory(cmd, prefs, gui)
-//			return 0
-//		endif
-//
-//		// find most recent OS- and version-compatible release
-//		url = ""
-//		for (i=0;i<DimSize(w_releases, 0);i+=1)
-//			projectName = w_releases[i][0]
-//			sscanf (w_releases[i][1])[5,Inf], "%f.x-%f", releaseIgorVersion, releaseVersion
-//			if (V_flag != 2)
-//				releaseIgorVersion = 0
-//			endif
-//			releaseExtra = w_releases[i][7]
-//			releaseVersion = str2num(w_releases[i][2] + "." + w_releases[i][3])
-//
-//			if (currentIgorVersion < releaseIgorVersion)
-//				sprintf cmd, "%s %0.2f%s requires Igor Pro version >= %g\r", projectName, releaseVersion, releaseExtra, releaseIgorVersion
-//				WriteToHistory(cmd, prefs, gui)
-//			elseif (strlen(w_releases[i][5]) && FindListItem(system, w_releases[i][5]) == -1)
-//				sprintf cmd, "%s %0.2f%s not available for %s\r", projectName, releaseVersion, releaseExtra, system
-//				WriteToHistory(cmd, prefs, gui)
-//			else
-//				url = w_releases[i][4]
-//				break
-//			endif
-//		endfor
-//		if (strlen(url) == 0)
-//			return 0
-//		endif
-
-
 	endif
-	
-	
-	//
-	
-	
+
 	// create the temporary folder
 	NewPath/C/O/Q DLPathTemp, downloadPathStr; KillPath/Z DLPathTemp
 	
@@ -4064,6 +4030,7 @@ end
 
 // this is an emergency repair function.
 // uses a fixed url to grab a recent working version.
+// silently: bit 0, no history, bit 1: no doAlert 
 function RepairUpdater([int silently])
 	
 	silently = ParamIsDefault(silently) ? 0 : silently
@@ -4071,11 +4038,11 @@ function RepairUpdater([int silently])
 	STRUCT PackagePrefs prefs
 	LoadPrefs(prefs)
 	
-//	CacheClearAll()
+	CacheClearAll()
 	
 	URLRequest/time=(prefs.pageTimeout)/Z url=ksGitHub
 	if (V_flag)
-		return silently ? 0 : WriteToHistory("Updater could not be repaired", prefs, 1) < -Inf
+		return silently & 1 ? 0 : WriteToHistory("Updater could not be repaired", prefs, 1) < -Inf
 	endif
 
 	wave/T wProc = ListToTextWave(S_serverResponse, "\n")
@@ -4088,18 +4055,18 @@ function RepairUpdater([int silently])
 	Grep/Q/E="(?i)^#pragma[\s]*version[\s]*="/LIST/Z wProc
 	
 	if (v_flag != 0)
-		return silently ? 0 : WriteToHistory("Updater could not be repaired", prefs, 1) < -Inf
+		return silently & 1 ? 0 : WriteToHistory("Updater could not be repaired", prefs, 1) < -Inf
 	endif
 	
 	s_value = LowerStr(TrimString(s_value, 1))
 	sscanf s_value, "#pragma version = %f", GitHubVersion
 	if (V_flag!=1 || GitHubVersion<=0)
-		return silently ? 0 : WriteToHistory("Updater could not be repaired", prefs, 1) < -Inf
+		return silently & 1 ? 0 : WriteToHistory("Updater could not be repaired", prefs, 1) < -Inf
 	endif
 	
 	variable thisVersion = GetThisVersion()
 	if (thisVersion >= GitHubVersion)
-		if (!silently)
+		if (!(silently & 2))
 			DoAlert 1, "Do you want to replace this version (" + num2str(thisVersion) + ") with repair version " + num2str(GitHubVersion) + "?"
 			if (v_flag == 2)
 				return 0
@@ -4123,17 +4090,19 @@ function RepairUpdater([int silently])
 	Execute/P "RELOAD CHANGED PROCS "
 	Execute/P/Q/Z "COMPILEPROCEDURES "
 	#endif
+	
+	// maybe kill panel and folder?
 
 	return success
 end
 
 
 // this needs to be robust.
-threadsafe function GetGitHubVersion(int timeout)
+threadsafe function [variable GitHubVersion, string strAlert] GetGitHubVersion(int timeout)
 	
 	URLRequest/time=(timeout)/Z url=ksGitHub
 	if (V_flag)
-		return 0
+		return [0, ""]
 	endif
 
 	wave/T wProc = ListToTextWave(S_serverResponse, "\n")
@@ -4142,30 +4111,34 @@ threadsafe function GetGitHubVersion(int timeout)
 		wave/T wProc = ListToTextWave(S_serverResponse, "\r")
 	endif
 	
-	variable GitHubVersion
+	strAlert = ""
 	string S_Value = "" // workaround for Grep bug for Igor 8
+	Grep/Q/E="(?i)^strconstant ksAlert = "/LIST/Z wProc
+	if (strlen(s_value))
+		strAlert = RemoveEnding(s_value[23,Inf], "\"")
+	endif
 	
 	// if we need to fix a messed up file we can use this last-ditch method
 	// use commented line to override the version number in the file
 	Grep/Q/E="(?i)^// forced update ="/LIST/Z wProc
 	if (strlen(S_Value)) // s_value must be initiallized
-		return str2num(S_Value[18,Inf])
+		return [str2num(S_Value[18,Inf]), strAlert]
 	endif
 	
 	// check GitHub procedure version number
 	Grep/Q/E="(?i)^#pragma[\s]*version[\s]*="/LIST/Z wProc
 	
 	if (v_flag != 0)
-		return 0
+		return [0, strAlert]
 	endif
 	
 	s_value = LowerStr(TrimString(s_value, 1))
 	sscanf s_value, "#pragma version = %f", GitHubVersion
 	if (V_flag != 1)
-		return 0
+		return [0, strAlert]
 	endif
 	
-	return GitHubVersion
+	return [GitHubVersion, strAlert]
 end
 
 
@@ -4347,12 +4320,16 @@ function MakeInstallerPanel()
 	// resizing panel hook
 	SetWindow InstallerPanel hook(ResizeControls)=ResizeControls#ResizeControlsHook
 	
+	// set cleanup hook
+	SetWindow InstallerPanel hook(hCleanup)=updater#hookCleanup
+	
 	if (tabSelection == 0)
 		ReloadProjectsList() // populate ProjectsFullList
 		if (DimSize(ProjectsFullList,0) == 0)
 			ProjectsDisplayList = {{"Download failed."},{""},{""},{""}}
 		else
-			Duplicate/free/T/RMD=[][5,5] ProjectsFullList, types
+			int typeCol = FindDimLabel(ProjectsFullList, 1, "type")
+			Duplicate/free/T/RMD=[][typeCol] ProjectsFullList, types
 			types = ReplaceString(",",types,";")
 			string typeList = "\"all;" + listOf(types) + "\""
 			PopupMenu popupType, win=InstallerPanel, value=#typeList, mode=1
@@ -4440,7 +4417,7 @@ function ReloadProjectsList([int forced])
 	endif
 		
 	Make/free/wave/N=(numPages) wwPages	
-	multithread wwPages = ParseProjectsPageAsWave(p, prefs.pageTimeout)
+	multithread wwPages = ParseProjectsIndexPageAsWave(p, prefs.pageTimeout)
 	int numNew
 	
 	// clear any incomplete or old list
@@ -4476,7 +4453,7 @@ function ReloadProjectsList([int forced])
 		toCache += w[p][%author] + ";"
 		toCache += w[p][%published] + ";"
 		toCache += w[p][%views] + ";"
-		toCache += ReplaceString(";", w[p][%type], ",") + ";"
+		toCache += ReplaceString(";", w[p][%type], ",") + ";" // shouldn't be necessary
 		toCache += w[p][%userNum] + ";"
 		CachePutWave(toCache, 0)
 	else
@@ -4502,21 +4479,16 @@ function LoadProjectsListFromCache()
 	
 	if (numLines)
 		Redimension/N=(DimSize(w, 0),-1) ProjectsFullList
-		ProjectsFullList[][%projectID] = StringFromList(0, w[p])
-		ProjectsFullList[][%name]      = StringFromList(2, w[p])
-		ProjectsFullList[][%author]    = StringFromList(3, w[p])
-		ProjectsFullList[][%published] = StringFromList(4, w[p])
-		ProjectsFullList[][%views]     = StringFromList(5, w[p])
-		ProjectsFullList[][%type]      = ReplaceString(",", StringFromList(6, w[p]), ";")
-		ProjectsFullList[][%userNum]   = StringFromList(7, w[p])
+		// extract strings from the list on each line into corresponding columns
+		ProjectsFullList = StringFromList(q, w[p])
 		Make/free/N=(numpnts(w)) CacheDates
-		CacheDates = str2num(StringFromList(1, w[p]))
+		CacheDates = str2num(ProjectsFullList[p][%ProjectCacheDate])
 		OldestCacheDate = (numLines < kNumProjects) ? 0 : WaveMin(CacheDates)
 		ResortWaves(0, 0)
 	endif
 	
 	#ifdef debug
-	printf "loaded %d projects from cache into ProjectsFullList", numpnts(w)
+	printf "loaded %d projects from cache into ProjectsFullList\r", numpnts(w)
 	#endif
 	
 	return OldestCacheDate
@@ -4524,11 +4496,10 @@ end
 
 
 // Parse html in WebPageText to find releases.
-threadsafe function/WAVE ParseProjectsPageAsWave(variable pageNum, variable timeout)
+threadsafe function/WAVE ParseProjectsIndexPageAsWave(variable pageNum, variable timeout)
 	
 	Make/T/Free/N=(0,10) w_projects
-	string dimLabelsList = "projectID;name;author;published;views;type;userNum;;;;"
-	SetDimLabels(dimLabelsList, 1, w_projects)
+	SetDimLabels(ksProjectsDimLabelsList, 1, w_projects)
 			
 	string baseURL, projectsURL, URL
 	string WebPageText = ""
@@ -4607,7 +4578,8 @@ threadsafe function/WAVE ParseProjectsPageAsWave(variable pageNum, variable time
 		strViews = SelectString(ParseError(strViews), strViews, GetTextField(strFooter, "<span>", strEnd=" view<"))
 		strViews = SelectString(ParseError(strViews), strViews, "")
 		
-		w_projects[DimSize(w_projects, 0)][] = {{projectID},{strName},{strAuthor},{strPubDate},{strViews},{strTypes},{strUserNum},{""},{""},{""}}
+		// columns correspond to those of ProjectsFullList
+		w_projects[DimSize(w_projects, 0)][] = {{projectID},{""},{strName},{strAuthor},{strPubDate},{strViews},{strTypes},{strUserNum},{""},{""}}
 	endfor	 // next project
 
 	return w_projects
@@ -4751,6 +4723,7 @@ function ReloadUpdatesList(int forced, int gui, [string pid])
 		endif
 	endif
 	
+	// get a list of IDs for projects we want to check
 	if (ParamIsDefault(pid))
 		if (checkInstalled)
 			wave/T w = ListToTextWave(ListOfProjectsFromInstallLog(),";")
@@ -4780,11 +4753,8 @@ function ReloadUpdatesList(int forced, int gui, [string pid])
 	endif
 	
 	numProjects = DimSize(w, 0)
-	Make/free/T/N=(numProjects,DimSize(UpdatesFullList,1)) wNew
-	
-	string dimLabelsList = "projectID;name;status;local;remote;system;releaseDate;installPath;"
-	dimLabelsList += "releaseURL;releaseIgorVersion;installDate;filesInfo;releaseInfo;lastUpdate;;"
-	SetDimLabels(dimLabelsList, 1, wNew)
+	Make/free/T/N=(numProjects,DimSize(UpdatesFullList,1)) wNew	
+	SetDimLabels(ksUpdatesDimLabelsList, 1, wNew)
 	
 	if (numProjects == 0)
 		// shouldn't happen
@@ -4841,7 +4811,9 @@ function ReloadUpdatesList(int forced, int gui, [string pid])
 	Print "started download of", numDownloads, "project pages"
 	#endif
 	
-	SetPanelStatus("Checking IgorExchange")
+	if (numDownloads)
+		SetPanelStatus("Checking IgorExchange")
+	endif
 		
 	// potentially download new keylists
 	multithread wKeyLists = SelectString(wDoDownload, wKeyLists, DownloadKeylistFromProjectPage(wNew[p][%projectID], prefs.pagetimeout) )
@@ -5004,20 +4976,20 @@ function ResortWaves(int tabNum, int sortCol)
 	
 	// create a ranking wave for FullList where identical strings are given equal rank
 	// this allows multiple columns to be used as sort keys
-	Make/free/N=(numRows,5) rank
+	Make/free/N=(numRows,4) rank
 	Make/free/N=(numRows)/T colTextWave
-	for (i=1;i<5;i+=1)
-		colTextWave = FullList[p][i]
+	for (i=0;i<4;i+=1)
+		colTextWave = FullList[p][i+1+(tabNum==0)]
 		wave colRank = CreateRank(colTextWave)
 		rank[][i] = colRank[p]
 	endfor
 
 	// negate values in columns of ranking wave that are to be reverse sorted
 	for (i=0;i<4;i+=1) //
-		rank[][abs(SortOrder[i])] = SortOrder[i]<0 ? -rank : rank
+		rank[][abs(SortOrder[i])-1] = SortOrder[i]<0 ? -rank : rank
 	endfor
 	
-	SortOrder = abs(SortOrder)
+	SortOrder = abs(SortOrder) - 1
 	SortColumns/KNDX={SortOrder[0],SortOrder[1],SortOrder[2],SortOrder[3]} sortwaves={rank, FullList}
 	
 	UpdateListboxWave(fGetStub())
@@ -5076,6 +5048,28 @@ threadsafe function/S ParsePublishDate(string str)
 	return num2istr(DateToJulian(year, month, day))
 end
 
+function hookCleanup(STRUCT WMWinHookStruct &s)
+	if (s.eventCode == 2) // kill
+		variable GitVer = str2num(GetUserData(s.winName, "", "GitVer"))
+		if (numtype(GitVer)==0 && GitVer > GetThisVersion()) 
+			
+			// what if updater has been updated, will we see the right version number? I think so...
+			// in Igor 9 we execute compileprocedures
+			// in igor 8 GetThisVersion() reads the version from the file
+			
+//			DoAlert 1, "It looks like Updater may need to be repaired or updated\r\rDo you want install repair version " + num2str(GitVer) + "?"
+//			if (v_flag == 1) // yes
+//				RepairUpdater(silently=1) 
+//			endif
+		endif
+		
+		PrefsSaveWindowPosition(s.winName)
+		KillDataFolder/Z root:packages:installer
+		KillWindow/Z UpdaterPrefsPanel
+	endif
+	return 0
+end
+
 function InstallerPopupProc(STRUCT WMpopupAction &s)
 	if (s.eventCode != 2)
 		return 0
@@ -5100,12 +5094,6 @@ function InstallerPopupProc(STRUCT WMpopupAction &s)
 end
 
 function InstallerTabProc(STRUCT WMTabControlAction &s)
-	if (s.eventCode == -1) // save some prefs before killing control panel
-		PrefsSaveWindowPosition(s.win)
-		KillDataFolder/Z root:packages:installer
-		KillWindow/Z UpdaterPrefsPanel
-		return 0
-	endif
 		
 	if (s.eventCode != 2)
 		return 0
@@ -5134,7 +5122,8 @@ function InstallerTabProc(STRUCT WMTabControlAction &s)
 		if (DimSize(ProjectsFullList, 0) == 0)
 			ProjectsDisplayList = {{"Download failed."},{""},{""}}
 		else
-			Duplicate/free/T/RMD=[][5,5] ProjectsFullList, types
+			int typeCol = FindDimLabel(ProjectsFullList, 1, "type")
+			Duplicate/free/T/RMD=[][typeCol] ProjectsFullList, types
 			types = ReplaceString(",", types, ";")
 			string typeList = "\"all;" + listOf(types) + "\""
 			PopupMenu popupType, win=InstallerPanel, value=#typeList, mode=1
@@ -5167,7 +5156,7 @@ function InstallerTabProc(STRUCT WMTabControlAction &s)
 	wave/T listWave = $(S_DataFolder + s_value)
 	if (V_value<DimSize(listwave, 0) && V_value>-1)
 		SetPanelStatus("Selected: " + matchlist[V_value][%name])
-		if (projectsTab || stringmatch(listWave[V_value][1], "*update available"))
+		if (projectsTab || stringmatch(listWave[V_value][%status], "*update available"))
 			Button btnInstallOrUpdate, win=InstallerPanel, disable=0
 		else
 			Button btnInstallOrUpdate, win=InstallerPanel, disable=2
@@ -5210,7 +5199,7 @@ function InstallerButtonProc(STRUCT WMButtonAction &s)
 			SettingsMenu()
 			break
 		case "btnInfo" :
-			ProjectInfo()
+			InfoMenu()
 			break
 		case "btnRefresh" :
 			CtrlNamedBackground BGCheck, status
@@ -5254,21 +5243,19 @@ function InstallerListBoxProc(STRUCT WMListboxAction &s)
 		wave/T fullList = dfr:UpdatesFullList
 		wave/T helpList = dfr:UpdatesHelpList
 	endif
-	string status = "", projectID = ""
+	string strStatus = "", projectID = ""
 	
 	switch (s.eventCode)
 		case 1: // mousedown
 			if (s.eventMod & 16) // right click?
 				InstallerRightClick(s)
 				return 0
-			endif
-			break
-		
-		case 2: // mouseup
-			if (s.row==-1 && s.eventmod!=1) // click in column heading - resort listbox waves
+			elseif (s.row == -1)
 				ResortWaves(stringmatch(s.ctrlName,"ListBoxUpdate"), s.col+1)
-			endif
-			
+			endif			
+			break		
+		case 2: // mouseup
+
 			// set status and enable Button based on selection
 			ControlInfo/W=$(s.win) $(s.ctrlName)
 			
@@ -5277,7 +5264,7 @@ function InstallerListBoxProc(STRUCT WMListboxAction &s)
 				if (stringmatch(s.ctrlName, "ListBoxInstall"))
 					Button btnInstallOrUpdate, win=InstallerPanel, disable=0
 				else
-					Button btnInstallOrUpdate, win=InstallerPanel, disable=2-2*(stringmatch(s.listWave[v_value][1], "*update available"))
+					Button btnInstallOrUpdate, win=InstallerPanel, disable=2-2*(stringmatch(s.listWave[v_value][%status], "*update available"))
 				endif
 				
 				#ifdef testing
@@ -5286,8 +5273,8 @@ function InstallerListBoxProc(STRUCT WMListboxAction &s)
 				
 				return 0
 			endif
-			sprintf status "Showing %d of %d projects", DimSize(s.listWave, 0), DimSize(FullList, 0)
-			SetPanelStatus(status)
+			sprintf strStatus "Showing %d of %d projects", DimSize(s.listWave, 0), DimSize(FullList, 0)
+			SetPanelStatus(strStatus)
 			Button btnInstallOrUpdate, win=InstallerPanel, disable=2
 			break
 			
@@ -5298,7 +5285,7 @@ function InstallerListBoxProc(STRUCT WMListboxAction &s)
 				if (stringmatch(s.ctrlName, "ListBoxInstall"))
 					Button btnInstallOrUpdate, win=InstallerPanel, disable=0
 				else
-					Button btnInstallOrUpdate, win=InstallerPanel, disable=2-2*(cmpstr(s.listWave[s.row][1], "update available")==0)
+					Button btnInstallOrUpdate, win=InstallerPanel, disable=2-2*(cmpstr(s.listWave[s.row][%status], "update available")==0)
 				endif
 						
 				#ifdef testing
@@ -5307,8 +5294,8 @@ function InstallerListBoxProc(STRUCT WMListboxAction &s)
 				
 				return 0
 			endif
-			sprintf status "Showing %d of %d projects", DimSize(s.listWave, 0), DimSize(FullList, 0)
-			SetPanelStatus(status)
+			sprintf strStatus "Showing %d of %d projects", DimSize(s.listWave, 0), DimSize(FullList, 0)
+			SetPanelStatus(strStatus)
 			break
 			
 		case 3: // double-click
@@ -5352,7 +5339,7 @@ function InstallerRightClick(STRUCT WMListboxAction &s)
 		wave/T fullList = dfr:UpdatesFullList
 		wave/T helpList = dfr:UpdatesHelpList
 	endif
-	string status = "", projectID = "", cmd = "", url = ""
+	string strStatus = "", projectID = "", cmd = "", url = ""
 	
 	projectID = matchlist[s.row][%projectID]
 	
@@ -5376,8 +5363,8 @@ function InstallerRightClick(STRUCT WMListboxAction &s)
 	endif
 	
 	// Updates tab
-	if (GrepString(s.listWave[s.row][1], "missing"))
-		PopupContextualMenu "Remove Missing Project from List;Locate Missing Project;Reinstall " + matchlist[s.row][1] + ";"
+	if (GrepString(s.listWave[s.row][%status], "missing"))
+		PopupContextualMenu "Remove Missing Project from List;Locate Missing Project;Reinstall " + matchlist[s.row][%status] + ";"
 		if (v_flag == 1)
 			LogRemoveProject(projectID)
 			ReloadUpdateslist(1, 1, pid=projectID)
@@ -5408,7 +5395,7 @@ function InstallerRightClick(STRUCT WMListboxAction &s)
 		if (V_Value == 1)
 			sprintf cmd, "%sShow Install Location;Recheck Local Files;Recheck IgorExchange;Uninstall %s;", cmd, matchlist[s.row][%name]
 			// check whether log is out of sync with proc file
-			if (GrepString(helpList[s.row][0], "\r 1 ipf") && GrepString(helpList[s.row][0], "missing")==0)
+			if (GrepString(helpList[s.row][0], "\r 1 ipf") && GrepString(helpList[s.row][%status], "missing")==0)
 				projectID = matchlist[s.row][%projectID]
 				string fileList = LogGetFileList(projectID)
 				string filePath = StringFromList(0, ListMatch(fileList, "*.ipf"))
@@ -5434,11 +5421,6 @@ function InstallerRightClick(STRUCT WMListboxAction &s)
 			ReloadUpdatesList(1, 1, pid=projectID) // force reload of local file
 		elseif (v_flag == 4) // recheck IgorExchange
 			ReloadUpdatesList(2, 1, pid=projectID)
-			
-//			ControlInfo/W=InstallerPanel popupFolder
-//			variable options = 2^(V_Value)
-//			StartPreemptiveDownload(options, ProjectID)
-			
 		elseif (v_flag == 5) // uninstall
 			STRUCT PackagePrefs prefs
 			LoadPrefs(prefs)
@@ -5463,7 +5445,7 @@ end
 // refresh listbox wave based on string str
 function UpdateListboxWave(string str)
 	ControlInfo/W=InstallerPanel tabs
-	int SelectedTab = v_value, typeCol = 5
+	int SelectedTab = v_value, typeCol = 6
 	int col, nameCol
 	string listBoxName = "", regEx = ""
 	
@@ -5516,9 +5498,9 @@ function UpdateListboxWave(string str)
 	switch(selectedTab)
 		case 0:
 			if (DimSize(matchList,0)) // check for non-zero rows
-				Duplicate/T/O/R = [][1,4] matchList, dfr:ProjectsDisplayList, dfr:ProjectsHelpList
-				DisplayList[][2] = Secs2Date(date2secs(1995, 10, 9) + (str2num(DisplayList[p][2]) - 2450000) * 86400, 0)
-				//DisplayList[][2] = JulianToDate(str2num(DisplayList[p][2]),prefs.dateFormat)
+				Duplicate/T/O/R = [][2,5] matchList, dfr:ProjectsDisplayList, dfr:ProjectsHelpList
+				DisplayList[][2] = Secs2Date(date2secs(1995, 10, 9) + (str2num(DisplayList) - 2450000) * 86400, 0)
+				//DisplayList[][2] = JulianToDate(str2num(DisplayList),prefs.dateFormat)
 				HelpList = ""
 				HelpList[][0] = "Project " + matchList[p][%projectID]
 			else
@@ -5529,7 +5511,7 @@ function UpdateListboxWave(string str)
 			if (DimSize(matchList, 0)) // check for non-zero rows
 				Duplicate/T/O/R=[][1,4] matchList, dfr:UpdatesDisplayList, dfr:UpdatesHelpList
 				HelpList = ""
-				HelpList[][0] = matchList[p][%filesInfo]
+				HelpList[][0] = "Project " + matchList[p][%projectID] + "\r" + matchList[p][%filesInfo]
 				HelpList[][1] = SelectString(strlen(matchList[p][%releaseInfo])>0, matchList[p][%filesInfo], ReplaceString("</p>", matchList[p][%releaseInfo], "\r"))
 
 				HelpList[][2] = SelectString(strlen(matchList[p][%installDate]), "", "Installed on " + Secs2Date(str2num(matchList[p][%installDate]), 0))
@@ -5573,6 +5555,9 @@ function UpdateListboxWave(string str)
 			sprintf s "Showing %d of %d projects", DimSize(DisplayList, 0), DimSize(FullList, 0)
 			SetPanelStatus(s)
 			Button btnInstallOrUpdate, win=InstallerPanel, disable=2
+		else
+			sprintf s "Selected: %s", matchList[v_value][%name]
+			SetPanelStatus(s)
 		endif
 	else
 		sprintf s "Showing %d of %d projects", DimSize(DisplayList, 0), DimSize(FullList, 0)
@@ -5634,9 +5619,6 @@ function InstallSelection()
 		endif
 		url = S_fileName
 		#endif
-		
-//		success = install(url, gui=2)
-//		// we use install rather than installProject because install may be able to figure out short title.
 				
 		success = installProject(projectID, gui=2)
 		
@@ -5699,12 +5681,14 @@ function CheckPanelVersion(string win, int restart)
 end
 
 function SettingsMenu()
-	PopupContextualMenu "Edit Settings;Show History;"
+	PopupContextualMenu "Edit Settings;Show History;Fix problems...;"
 	if (V_flag == 1)
 		MakePrefsPanel()
 		PauseForUser UpdaterPrefsPanel
 	elseif (V_flag == 2)
 		ShowHistory()
+	elseif (V_flag == 3)
+		RepairUpdater()
 	endif
 	return 0
 end
@@ -5735,9 +5719,9 @@ function ShowHistory()
 	endif
 end
 
-function ProjectInfo()
+function InfoMenu()
 	string cmd = "(Version: " + num2str(GetThisVersion()) + ";"
-	cmd += "Visit web page;Email the developer;"
+	cmd += "Visit web page;Email the developer;" // Fix problems...;"
 	PopupContextualMenu cmd
 	if (V_flag == 2)
 		BrowseURL /Z "https://www.wavemetrics.com/node/8197"
@@ -5756,6 +5740,8 @@ function ProjectInfo()
 		wt[2] = "uni-bayreuth de"
 		sprintf cmd, "%sto:%s%%%d%s?%s&%s" wt[0], wt[1], 40, wt[2], wt[3], wt[4]
 		BrowseURL/Z ReplaceString(" ", cmd, ".")
+	elseif (V_flag == 4)
+		RepairUpdater()
 	endif
 end
 
