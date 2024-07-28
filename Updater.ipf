@@ -1,6 +1,6 @@
 #pragma TextEncoding="UTF-8"
 #pragma rtGlobals=3
-#pragma version=5.05
+#pragma version=5.06
 #pragma IgorVersion=8
 #pragma IndependentModule=Updater
 #include <Resize Controls>
@@ -618,7 +618,7 @@ function BackgroundCheck(STRUCT WMBackgroundStruct &s)
 	
 	if (!gui)
 		
-		if (UpdateAvailable==1 && GrepString(strName, "Updater$")==0)
+		if (UpdateAvailable==1 && GrepString(strName, "Updater$"))
 			if (GetThisVersion() >= remote)
 				LogSyncWithProjectFile("8197")
 				UpdateAvailable = 0 // this may prevent us from fixing a file with version higher than current release version
@@ -1037,7 +1037,7 @@ function/DF SetupPackageFolder()
 		//LogUpdateInstallPath(string projectID, string installPath)
 	endif
 	
-	// fix for version 3.8
+	// maybe check status before doing this?
 	LogSyncWithProjectFile("8197")
 	
 	return dfr
@@ -1090,10 +1090,12 @@ end
 // installPath is either path to file, or path to folder (installPath from log)
 // If we're updating something from the install log, must supply shortTitle and localVersion
 // Returns full path to replaced file
-function/S UpdateFile(installPath, url, projectID, [shortTitle, localVersion, newVersion])
+function/S UpdateFile(installPath, url, projectID, [shortTitle, localVersion, newVersion, silently])
 	string installPath, url, projectID
 	string shortTitle
-	variable localversion, newVersion
+	variable localversion, newVersion, silently
+	
+	silently = paramisdefault(silently) ? 0 : silently
 				
 	string cmd = "", filePath = "", fileExt = ""
 	string fileName
@@ -1136,7 +1138,7 @@ function/S UpdateFile(installPath, url, projectID, [shortTitle, localVersion, ne
 	endif
 	
 	// check with user before overwriting file
-	if (isFile(filePath))
+	if (!silently && isFile(filePath))
 		cmd += "Do you want to replace " + fileName + " with\r"
 		cmd += "the file from\r" + url + "?"
 		DoAlert 1, cmd
@@ -1149,13 +1151,18 @@ function/S UpdateFile(installPath, url, projectID, [shortTitle, localVersion, ne
 	
 	if (strlen(backupPathStr) && isFile(filePath)) // save a backup of the old procedure file
 		// figure out full path to backup file
-		sprintf backupPathStr, "%s%s%g.%s", backupPathStr, ParseFilePath(3, fileName, ":", 0, 0), localVersion, ParseFilePath(4, fileName, ":", 0, 0)
+		string NewFileName = ""
+		fileExt = selectstring (strlen(fileExt) > 0, "", "." + fileExt)
+
+		sprintf NewFileName, "%s%g%s", ParseFilePath(3, fileName, ":", 0, 0), localVersion, fileExt
+//		sprintf backupPathStr, "%s%s%g.%s", backupPathStr, ParseFilePath(3, fileName, ":", 0, 0), localVersion, ParseFilePath(4, fileName, ":", 0, 0)
 		flagI = 0
-		GetFileFolderInfo/Q/Z backupPathStr
+		GetFileFolderInfo/Q/Z backupPathStr + NewFileName
 		if (v_flag == 0) // file already exists in archive location
-			flagI = 2 // check before overwriting
+			NewFileName = UniqueFileName(backupPathStr, NewFileName, 0)
+//			flagI = 2 // check before overwriting
 		endif
-		MoveFile/O/S="Archive current file"/I=(flagI)/Z filePath as backupPathStr
+		MoveFile/O/S="Archive current file"/I=(flagI)/Z filePath as backupPathStr + NewFileName
 		if (v_flag == 0)
 			sprintf cmd, "Saved copy of %s version %g to %s\r", shortTitle, localVersion, s_path
 			WriteToHistory(cmd, prefs, 0)
@@ -1730,7 +1737,7 @@ end
 
 // baseName should be legal fileName
 // returns path to a nonexisting file with name basename or basename + numeral
-function/S UniqueFileName(string pathStr, string baseName)
+function/S UniqueFileName(string pathStr, string baseName, int fullpath)
 	pathStr = ParseFilePath(2, pathStr, ":", 0, 0)
 	GetFileFolderInfo/Q/Z pathStr
 	if (v_isFolder == 0)
@@ -1738,18 +1745,27 @@ function/S UniqueFileName(string pathStr, string baseName)
 	endif
 	GetFileFolderInfo/Q/Z pathStr + baseName
 	if (v_flag)
-		return pathStr + baseName
+		return selectstring(fullpath, baseName, pathStr + baseName)
 	endif
+	
 	int i
-	string strOut = ""
+	string NewFileName = ""	
+	string ext = ParseFilePath(4, baseName, ":", 0, 0)
+	int extlen = strlen(ext)
+	if (strlen(ext))
+		baseName = baseName[0, strlen(baseName)-extlen-2]
+		ext = "." + ext
+	endif
+		
 	for (i=0;i<1000;i+=1)
-		sprintf strOut, "%s%s_%d", pathStr, baseName, i
-		GetFileFolderInfo/Q/Z strOut
+		sprintf NewFileName, "%s_%d%s", baseName, i, ext
+		GetFileFolderInfo/Q/Z pathStr + NewFileName
 		if (v_flag)
 			break
 		endif
 	endfor
-	return strOut
+	
+	return selectstring(fullpath, NewFileName, pathStr + NewFileName)
 end
 
 // returns listStr, purged of any items that match an item in ZapListStr.
@@ -1785,8 +1801,7 @@ function/WAVE ParseAllReleasesAsWave(string AllReleasesText)
 	string strLinkStart = "\"field-paragraph-file\""
 	string strWindows = "<span class=\"entity-reference\">Windows</span>"
 	string strMac = "<span class=\"entity-reference\">Mac-"
-	
-	
+		
 	// locate project name
 //	selStart = strsearch(AllReleasesText, "<h1 class=\"page-title\" title=\"Releases for ", blockStart, 2)
 	
@@ -2575,23 +2590,9 @@ function install(packageList, [path, gui])
 			if (V_row > -1)
 				projectID = ProjectsFullList[v_row][%projectID]
 			else
-				// can't find projectID from short title!!
-//				sprintf url, "https://www.wavemetrics.com/project/%s", projectName
-//				URLRequest/time=(prefs.pageTimeout)/Z url=url
-//				
-//				selStart = strsearch(S_serverResponse, "<a href=\"/node/", 0, 2)
-//				selEnd = inf
-//				if (selStart > 0)
-//					selStart += 12
-//					selEnd = strsearch(S_serverResponse, "/edit\"", selStart, 2)
-//				endif
-//				if ((selEnd - selStart)>0 && (selEnd - selStart)<10)
-//					projectID = S_serverResponse[selStart+1, selEnd-1]
-//				else
-					sprintf cmd, "Could not find project ID for %s\r", projectName
-					WriteToHistory(cmd, prefs, 0)				
-					continue
-//				endif
+				sprintf cmd, "Could not find project ID for %s\r", projectName
+				WriteToHistory(cmd, prefs, 0)
+				continue
 			endif
 		else
 			projectID = projectName
@@ -2599,72 +2600,12 @@ function install(packageList, [path, gui])
 		
 		sprintf cmd, "Install started: %s", projectName
 		WriteToHistory(cmd, prefs, 0)
-		
-//		// check the project page on IgorExchange
-//		URLRequest/time=(prefs.pageTimeout)/Z url=url
-//		if (V_flag || !strlen(ParseProjectPageAsList("", S_serverResponse)))
-//			wave/Z/T ProjectsFullList = CacheGetProjectsWave()
-//			NameCol = FindDimLabel(ProjectsFullList, 1, "name")
-//			FindValue/TEXT=projectName/TXOP=4/RMD=[][NameCol] ProjectsFullList
-//			if (V_row > -1)
-//				sprintf url, "https://www.wavemetrics.com/node/%s", ProjectsFullList[V_row][%projectID]
-//			 	URLRequest/time=(prefs.pageTimeout)/Z url=url
-//			endif
-//			if (V_flag || !strlen(ParseProjectPageAsList("", S_serverResponse)))
-//				sprintf cmd, "Installer could not load %s\r", url
-//				WriteToHistory(cmd, prefs, gui)
-//				continue
-//			else
-//				projectID = ProjectsFullList[V_row][%projectID]
-//			endif
-//		endif
-					
-//		if (nameIsURL) // try to extract a project name from web page
-//			// this should work for projects older than updater, ie. projectID <= 8197
-//			selStart = strsearch(S_serverResponse, "<link rel=\"canonical\" href=\"", 0, 2)
-//			selStart += 28
-//			selEnd = strsearch(S_serverResponse, "\"", selStart, 0)
-//			if (selEnd==-1 || selStart<28)
-//				sprintf cmd, "Installer could not find releases at %s\r", url
-//				WriteToHistory(cmd, prefs, gui)
-//				continue
-//			endif
-//			url = S_ServerResponse[selStart,selEnd-1]
-//			projectName = ParseFilePath(0, url, "/", 1, 0) // projectName is short title of project
-//		endif
-		
-//		if ( GrepString(projectName,"(?i)[a-z]+") == 0 ) // projectID > 8197
-//			// projectName is numeric
-//			selStart = strsearch(S_serverResponse, "<h1 class=\"page-title\" title=\"", 0, 2)
-//			if (selStart > -1)
-//				selStart += 30
-//				selEnd = strsearch(S_serverResponse, "\"", selStart, 0)
-//				projectName = S_serverResponse[selStart,selEnd-1] // set projectName to full title
-//			else
-//				projectName = "Project " + projectName
-//			endif
-//		endif
-				
-//		sprintf cmd, "Found %s at %s\r", projectName, url
-//		WriteToHistory(cmd, prefs, 0)
-	
-//		// find the link to the 'all releases' page for this project
-//		selEnd = strsearch(S_serverResponse, ">View all releases</a>", 0, 2)
-//		selStart = strsearch(S_serverResponse, "href=", selEnd, 3)
-//		if (selEnd==-1 || selStart==-1)
-//			sprintf cmd, "Installer could not find releases at %s\r", url
-//			WriteToHistory(cmd, prefs, gui)
-//			continue
-//		endif
-//		url = "https://www.wavemetrics.com" + S_serverResponse[selStart+6,selEnd-2]
-//		projectID = ParseFilePath(0, url, "/", 1, 0)
-
 		successfulInstalls += installProject(projectID, gui=gui, path=path)
 	endfor
 	return successfulInstalls
 end
 
-// url supplies the file to be installed
+// url optionally supplies the file to be installed
 // this can be used for local install
 // must supply version with url!
 function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
@@ -2708,8 +2649,7 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 	backupPathStr = SelectString((prefs.options & 1), "", SpecialDirPath(ksBackupLocation,0,0,0))
 	
 	if (strlen(url) == 0)
-		
-		
+				
 		string ReleaseKeyList = DownloadKeylistFromProjectPage(projectID, prefs.pageTimeout)
 		if (strlen(ReleaseKeyList) == 0) // download failed
 			WriteToHistory("Could not load project page", prefs, gui)
@@ -2722,7 +2662,7 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 		releaseVersion = NumberByKey("remote", ReleaseKeyList)
 		// shortTitle defaults to full name from web page
 		shortTitle = StringByKey("name", ReleaseKeyList)
-//		releaseExtra = StringByKey("name", ReleaseKeyList)
+//		releaseExtra = StringByKey("?", ReleaseKeyList)
 
 		if (currentIgorVersion < releaseIgorVersion)
 			sprintf cmd, "%s %0.2f%s requires Igor Pro version >= %g\r", projectName, releaseVersion, releaseExtra, releaseIgorVersion
@@ -2854,15 +2794,22 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 			if (v_flag == 2)
 				return 0
 			endif
-			if (strlen(backupPathStr))
+			if (strlen(backupPathStr)) // backup the old file
 				variable ver = GetProcVersion(packagePathStr + destFileName)
-				string bupFile = SelectString(ver>0, destFileName, destFileName + num2str(ver))
-				bupFile = UniqueFileName(backupPathStr, bupFile)
-				MoveFile/Z 	packagePathStr + destFileName as bupFile
-				sprintf cmd, "Created backup file: %s\r", bupFile
+				string fileExt = ParseFilePath(4, destFileName, ":", 0, 0)
+				string bupFile = ""
+				fileExt = selectstring (strlen(fileExt) > 0, "", "." + fileExt)
+				sprintf bupFile, "%s%g%s", ParseFilePath(3, fileName, ":", 0, 0), ver, fileExt			
+				GetFileFolderInfo/Q/Z backupPathStr + bupFile
+				if (v_flag == 0) // already exists
+					bupFile = UniqueFileName(backupPathStr, bupFile, 0)
+				endif
+				MoveFile/Z 	packagePathStr + destFileName as backupPathStr + bupFile
+				sprintf cmd, "Created backup file: %s\r", backupPathStr + bupFile
 				WriteToHistory(cmd, prefs, 0)
 			endif
 		endif
+		// install the new file
 		MoveFile/O/Z fileName as packagePathStr + destFileName
 		if (V_flag != 0)
 			return 0
@@ -2901,9 +2848,7 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 	string xopList = ListMatch(fileList, "*.xop")
 	if (strlen(xopList))
 		IncludeProcStr = ""
-	endif
-	
-	
+	endif	
 	
 	// problem: if package has mac and windows xops, but mac xop has
 	// resource fork instead of extension, will offer to install an alias
@@ -2932,8 +2877,7 @@ function installProject(projectID, [gui, path, shortTitle, url, releaseVersion])
 
 // solution is for developer to supply an itx script to create an alias for the correct xop.
 // see the top of this file for more info about itx scripts.
-	
-	
+		
 	LogUpdateProject(projectID, shortTitle, packagePathStr, num2str(releaseVersion), fileList, num2istr(datetime))
 	InstallerCleanup(downloadPathStr)
 			
@@ -4128,7 +4072,7 @@ function RepairUpdater([int silently])
 	// It seems that requesting the file from Github with URLRequest
 	// doesn't change the eol in the updater.ipf file.
 	// In contrast, in S_serverResponse the /r become /n
-	int success = ItemsInList(UpdateFile(FunctionPath(""), ksGitHub, "8197", shortTitle="Updater", localVersion=thisVersion, newVersion=GitHubVersion))
+	int success = ItemsInList(UpdateFile(FunctionPath(""), ksGitHub, "8197", shortTitle="Updater", localVersion=thisVersion, newVersion=GitHubVersion, silently=1))
 	
 	if (success && LogCleanup(test=1))
 		DoAlert 1, "Updater has been replaced.\rDo you want to clear unrecognised projects from the installation log?"
@@ -4619,7 +4563,7 @@ threadsafe function/WAVE ParseProjectsIndexPageAsWave(variable pageNum, variable
 			if (selStart<0 || selEnd<0)
 				break
 			endif
-			strTypes += strProjectText[selStart+1,selEnd-1] + ";"
+			strTypes += strProjectText[selStart+1,selEnd-1] + ","
 		while (1)
 		
 		strFooter = GetTextField(strProjectText, strFooterStart, strEnd="</div>")
@@ -4637,12 +4581,10 @@ threadsafe function/WAVE ParseProjectsIndexPageAsWave(variable pageNum, variable
 	return w_projects
 end
 
-
 // returns a stringlist of projects found in user procedures folder
 function/S UserProcsProjectsList()
 
-	wave/T w = GetProcsRecursive(1)
-	
+	wave/T w = GetProcsRecursive(1)	
 	if (numpnts(w))
 		multithread w = GetProjectIDString(w)
 	endif
@@ -4712,7 +4654,6 @@ end
 // forced: bit 0: (forced = 1) recheck local file versions and install status
 // bit 1: (forced = 2) reload from cache/install log
 // bit 2: (forced = 4) reload remote
-
 function ReloadUpdatesList(int forced, [string pid])
 	if (WinType("InstallerPanel") != 7)
 		return 0
@@ -4765,7 +4706,6 @@ function ReloadUpdatesList(int forced, [string pid])
 			// maybe a file has been updated
 			UpdatesFullList[][%status] = SelectString(str2num(UpdatesFullList[p][%local])>=str2num(UpdatesFullList[p][%remote]), UpdatesFullList[p][%status], "up to date")
 			UpdatesFullList[][%lastUpdate] = num2istr(GetFileCreationDate(UpdatesFullList[p][%installPath]))
-//			ResortWaves(1, 0)
 		endif
 		ResortWaves()
 	endif
@@ -4779,10 +4719,8 @@ function ReloadUpdatesList(int forced, [string pid])
 	int i, numProjects, numDownloads
 	string UserFilesPath = SpecialDirPath("Igor Pro User Files", 0, 0, 0)
 	
-	// clear any incomplete or old list
-	if (ParamIsDefault(pid))
-//		Redimension/N=(0,-1) UpdatesFullList
-	else
+	// if we're checking one project, remove it from the list
+	if (!ParamIsDefault(pid))
 		FindValue/Z/TEXT=pid/TXOP=2/RMD=[][0,0] UpdatesFullList
 		if (v_value >- 1)
 			filePath = UpdatesFullList[v_value][%installPath]
